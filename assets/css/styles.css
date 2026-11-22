@@ -79,6 +79,9 @@ p { margin: 0 0 1em; }
 .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .nav a.active { background: var(--primary-soft); color: var(--primary); }
 .nav-public a { color: var(--muted); }
+.nav a.btn-primary,
+.nav a.btn-primary:hover { color: #fff; background: linear-gradient(135deg, var(--primary), var(--primary-2)); padding: 8px 16px; margin-left: 6px; }
+.nav a.btn-primary:hover { filter: brightness(1.05); }
 
 .tabbar { display: none; }
 @media (max-width: 860px) {
