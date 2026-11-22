@@ -47,7 +47,28 @@
     key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/>',
     refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
+    bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+    mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+    cloud: '<path d="M17.5 19H7a5 5 0 1 1 1.1-9.9A6 6 0 0 1 19.5 11a4 4 0 0 1-2 8z"/>',
+    print: '<path d="M6 9V2h12v7"/><rect x="6" y="14" width="12" height="8"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>',
   };
+  const GOOGLE_SVG = '<svg class="icon" viewBox="0 0 48 48" aria-hidden="true" style="stroke:none"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+  const cloud = () => window.GB_CLOUD || { configured: false, ready: false, user: null, status: "idle" };
+  const signedIn = () => !!cloud().user;
+  function avatar(size = 32) {
+    const u = cloud().user, p = Store.get().profile;
+    const name = (u && u.name) || (p && p.name) || "A";
+    if (u && u.photo) return `<img src="${esc(u.photo)}" alt="" referrerpolicy="no-referrer" width="${size}" height="${size}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover"/>`;
+    return `<span class="avatar" style="width:${size}px;height:${size}px;font-size:${Math.round(size * .42)}px">${esc(name.charAt(0).toUpperCase())}</span>`;
+  }
+  function syncLabel() {
+    const c = cloud();
+    if (!c.user) return "";
+    return { loading: "Loading your data…", syncing: "Syncing…", synced: "All changes saved", offline: "Offline: will sync when you reconnect", error: c.error || "Sync error", idle: "Signed in" }[c.status] || "";
+  }
   const icon = (name, cls = "icon") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
   function toast(msg, ico = "check") {
@@ -83,7 +104,7 @@
   ];
   function renderChrome(route) {
     const onboarded = !!Store.get().profile;
-    const publicRoute = !onboarded || route === "home" || route === "onboard";
+    const publicRoute = !onboarded || route === "home" || route === "onboard" || route === "signin";
     document.body.classList.toggle("app-mode", !publicRoute);
     const nav = $("#nav");
     if (publicRoute) {
@@ -92,12 +113,16 @@
         <a href="#/home#features">Features</a>
         <a href="#/home#branches">Branches</a>
         <a href="#/home#how">How it works</a>
+        ${cloud().configured && !signedIn() ? `<a href="#/signin" class="signin-link keep-mobile">${icon("login")}<span>Sign in</span></a>` : ""}
         <a class="btn btn-primary btn-sm" href="${onboarded ? "#/dashboard" : "#/onboard"}">${onboarded ? "Open dashboard" : "Start free"}</a>`;
     } else {
       nav.className = "nav";
       nav.innerHTML = APP_NAV.map((n) => `<a href="#/${n.r}" class="${route === n.r ? "active" : ""}">${icon(n.ic)}<span>${n.label}</span></a>`).join("") +
-        `<a href="#/settings" title="Settings" class="${route === "settings" ? "active" : ""}">${icon("gear")}<span class="sr-only">Settings</span></a>
-         <a href="#/profile" title="Profile" class="${route === "profile" ? "active" : ""}">${icon("user")}<span class="sr-only">Profile</span></a>`;
+        `<a href="#/history" title="History" class="keep-mobile ${route === "history" ? "active" : ""}">${icon("history")}<span class="sr-only">History</span></a>
+         <a href="#/settings" title="Settings" class="keep-mobile ${route === "settings" ? "active" : ""}">${icon("gear")}<span class="sr-only">Settings</span></a>
+         ${signedIn() ? `<a href="#/profile" title="Profile · ${esc(cloud().user.email)}" class="keep-mobile nav-avatar ${route === "profile" ? "active" : ""}">${avatar(28)}<span class="sr-only">Profile</span></a>`
+           : `<a href="#/profile" title="Profile" class="keep-mobile ${route === "profile" ? "active" : ""}">${icon("user")}<span class="sr-only">Profile</span></a>
+              ${cloud().configured ? `<a href="#/signin" class="keep-mobile btn btn-primary btn-sm">Sign in</a>` : ""}`}`;
     }
     $("#tabbar").innerHTML = publicRoute ? "" : APP_NAV.map((n) =>
       `<a href="#/${n.r}" class="${route === n.r ? "active" : ""}">${icon(n.ic)}<span>${n.label.replace("AI ", "")}</span></a>`).join("");
@@ -188,7 +213,7 @@
     const year = new Date().getFullYear();
     return `
     <div style="max-width:860px;margin:0 auto">
-      <div class="page-head"><h1>Let's set up your prep</h1><p class="muted">Choose your GATE paper. You can change it later in your profile.</p></div>
+      <div class="page-head"><h1>Let's set up your prep</h1><p class="muted">Choose your GATE paper. You can change it later in your profile.${cloud().configured && !signedIn() ? ` Already have an account? <a href="#/signin">Sign in</a> to restore your progress.` : ""}</p></div>
       <form id="onboard-form" class="stack">
         <div class="grid grid-2" id="branch-pick">
           ${BRANCHES.map((b) => `<button type="button" class="card branch-card ${pre === b.id ? "selected" : ""}" data-branch="${b.id}">
@@ -241,8 +266,11 @@
       .sort((a, c) => a.acc - c.acc).slice(0, 3);
     const nextRem = upcomingReminders(3);
 
+    const banner = cloud().configured && cloud().ready && !signedIn()
+      ? `<div class="card banner">${icon("cloud")}<div class="grow"><b>Save your progress to your account</b><div class="muted small">Sign in to keep your quiz history, syllabus progress and activity on any device.</div></div><a class="btn btn-primary btn-sm" href="#/signin">Sign in</a></div>` : "";
     return `
     <div class="grid" style="grid-template-columns:minmax(0,1fr)">
+      ${banner}
       <div class="card welcome">
         <div class="spread" style="align-items:flex-start">
           <div>
@@ -304,7 +332,7 @@
         <div class="card">
           <div class="card-title">${icon("bulb")} Tip of the day</div>
           <p>${esc(tip)}</p>
-          <div class="card-title" style="margin-top:18px">${icon("clock")} Recent quizzes</div>
+          <div class="spread" style="margin-top:18px;margin-bottom:14px"><div class="card-title" style="margin:0">${icon("clock")} Recent quizzes</div><a class="small" href="#/history">Full history →</a></div>
           ${st.attempts.length ? `<ul class="list">${st.attempts.slice(0, 3).map(attemptRow).join("")}</ul>` : `<div class="empty small">No quizzes yet. <a href="#/quiz">Take your first one →</a></div>`}
         </div>
       </div>
@@ -353,7 +381,8 @@
     const b = Store.get().profile.branch;
     $$("[data-topic]").forEach((cb) => cb.addEventListener("change", () => {
       const [sid, idx] = cb.dataset.topic.split(":");
-      Store.toggleTopic(b, sid, Number(idx));
+      const subj = branchById(b).subjects.find((x) => x.id === sid);
+      Store.toggleTopic(b, sid, Number(idx), subj ? `${subj.topics[Number(idx)]} (${subj.name})` : "");
       const scroll = window.scrollY;
       const openIds = $$("details.subject").map((d) => d.open);
       render();
@@ -459,12 +488,16 @@
         if (!questions.length) { toast("No bank questions for that subject yet. Try the AI quiz.", "spark"); return; }
         if (questions.length < cfg.count) toast(`Only ${questions.length} bank questions available here. Try AI for more.`, "bulb");
       }
-      Object.assign(quiz, { phase: "play", questions, idx: 0, answers: new Array(questions.length).fill(null), seconds: 0, cfg });
-      stopTimer();
-      quiz.timer = setInterval(() => { quiz.seconds++; const t = $("#qtimer"); if (t) t.textContent = fmtTime(quiz.seconds); }, 1000);
-      render();
+      startQuiz(questions, cfg);
     });
   };
+  function startQuiz(questions, cfg) {
+    Object.assign(quiz, { phase: "play", questions, idx: 0, answers: new Array(questions.length).fill(null), seconds: 0, cfg });
+    stopTimer();
+    quiz.timer = setInterval(() => { quiz.seconds++; const t = $("#qtimer"); if (t) t.textContent = fmtTime(quiz.seconds); }, 1000);
+    if (location.hash.split("?")[0] !== "#/quiz") location.hash = "#/quiz"; else render();
+  }
+  const bookmarkBtn = (qq, i) => { const on = Store.isSaved(qq); return `<button type="button" class="btn btn-ghost btn-sm bm ${on ? "on" : ""}" data-bm="${i}" title="${on ? "Remove from saved" : "Save for revision"}">${icon("bookmark")}<span>${on ? "Saved" : "Save"}</span></button>`; };
 
   function quizPlay() {
     const q = quiz.questions[quiz.idx], chosen = quiz.answers[quiz.idx];
@@ -482,7 +515,7 @@
         const cls = i === quiz.idx ? "cur" : a === null ? "" : quiz.instant ? (a === qq.a ? "ok" : "no") : "cur";
         return `<i class="${cls}" title="Q${i + 1}"></i>`; }).join("")}</div>
       <div class="card">
-        <div class="muted small" style="margin-bottom:6px">Question ${quiz.idx + 1} of ${quiz.questions.length}</div>
+        <div class="spread" style="margin-bottom:6px"><span class="muted small">Question ${quiz.idx + 1} of ${quiz.questions.length}</span>${bookmarkBtn(q, quiz.idx)}</div>
         <div class="qtext">${esc(q.q)}</div>
         <div class="options">
           ${q.o.map((opt, i) => {
@@ -504,6 +537,7 @@
   }
   function mountPlay() {
     $$("[data-opt]").forEach((btn) => btn.addEventListener("click", () => { quiz.answers[quiz.idx] = Number(btn.dataset.opt); render(); }));
+    bindBookmarks(quiz.questions);
     const go = (d) => { quiz.idx = Math.min(quiz.questions.length - 1, Math.max(0, quiz.idx + d)); render(); window.scrollTo(0, 0); };
     $("#q-prev")?.addEventListener("click", () => go(-1));
     $("#q-next")?.addEventListener("click", () => go(1));
@@ -520,7 +554,9 @@
     const answered = items.filter((x) => x.chosen !== null);
     const correct = answered.filter((x) => x.chosen === x.a).length;
     if (answered.length) {
-      Store.addAttempt({ branch: quiz.cfg.branch, subject: quiz.cfg.subject, mode: quiz.cfg.mode, total: answered.length, correct, seconds: quiz.seconds, items: answered });
+      const b = branchById(quiz.cfg.branch);
+      const label = quiz.cfg.mode === "saved" ? "Saved questions" : quiz.cfg.subject === "mixed" ? "Smart mix" : subjectName(b, quiz.cfg.subject);
+      Store.addAttempt({ branch: quiz.cfg.branch, subject: quiz.cfg.subject, mode: quiz.cfg.mode, total: answered.length, correct, seconds: quiz.seconds, items: answered }, label);
     }
     quiz.result = { items, correct, answered: answered.length };
     quiz.phase = "result";
@@ -545,7 +581,7 @@
         <div class="card-title">${icon("book")} Review answers</div>
         ${r.items.map((it, i) => `
           <div class="review-item">
-            <div class="spread"><b class="small">Q${i + 1}</b>${it.chosen === null ? '<span class="chip">Skipped</span>' : it.chosen === it.a ? '<span class="chip chip-success">Correct</span>' : '<span class="chip chip-danger">Wrong</span>'}</div>
+            <div class="spread"><b class="small">Q${i + 1}</b><span class="row" style="gap:8px">${bookmarkBtn(quiz.questions[i], i)}${it.chosen === null ? '<span class="chip">Skipped</span>' : it.chosen === it.a ? '<span class="chip chip-success">Correct</span>' : '<span class="chip chip-danger">Wrong</span>'}</span></div>
             <p style="margin:6px 0 8px;font-weight:600;white-space:pre-wrap">${esc(it.q)}</p>
             <div class="small">${it.chosen !== null && it.chosen !== it.a ? `<div style="color:var(--danger)">Your answer: ${LETTERS[it.chosen]}. ${esc(it.o[it.chosen])}</div>` : ""}
             <div style="color:var(--success)">Correct: ${LETTERS[it.a]}. ${esc(it.o[it.a])}</div>
@@ -556,6 +592,17 @@
   }
   function mountResult() {
     $("#r-again")?.addEventListener("click", () => { quiz.phase = "setup"; render(); });
+    bindBookmarks(quiz.questions);
+  }
+  function bindBookmarks(list) {
+    $$("[data-bm]").forEach((btn) => btn.addEventListener("click", () => {
+      const qq = list[Number(btn.dataset.bm)];
+      const on = Store.toggleSaved(qq, quiz.cfg ? quiz.cfg.branch : Store.get().profile.branch);
+      btn.classList.toggle("on", on);
+      btn.title = on ? "Remove from saved" : "Save for revision";
+      btn.querySelector("span").textContent = on ? "Saved" : "Save";
+      toast(on ? "Saved to History → Saved questions" : "Removed from saved", "bookmark");
+    }));
   }
 
   // Progress
@@ -567,7 +614,8 @@
     const max = Math.max(5, ...days.map((x) => x.n));
     const studyMins = Math.round(st.attempts.filter((a) => a.branch === b.id).reduce((s, a) => s + (a.seconds || 0), 0) / 60);
     return `
-    <div class="page-head"><h1>Your progress</h1><p class="muted">${esc(b.name)}: accuracy, consistency and syllabus coverage.</p></div>
+    <div class="page-head spread"><div><h1>Your progress</h1><p class="muted">${esc(b.name)}: accuracy, consistency and syllabus coverage.<span class="print-only"> Report for ${esc(st.profile.name || "Aspirant")} · ${new Date().toLocaleDateString()}</span></p></div>
+      <div class="row no-print"><a class="btn btn-ghost" href="#/history">${icon("history")} Full history</a><button class="btn btn-primary" id="print-report">${icon("print")} Download report</button></div></div>
     <div class="grid">
       <div class="grid grid-4">
         ${statCard("flame", Store.streak() + " days", "Current streak")}
@@ -600,6 +648,8 @@
       </div>
     </div>`;
   };
+
+  views.progress.mount = () => { $("#print-report")?.addEventListener("click", () => window.print()); };
 
   // Reminders
   function nextOccurrence(r) {
@@ -688,7 +738,7 @@
     const stamp = Store.todayKey(now) + " " + hhmm;
     Store.get().reminders.forEach((r) => {
       if (!r.enabled || r.time !== hhmm || !r.days.includes(now.getDay()) || r.lastFired === stamp) return;
-      Store.updateReminder(r.id, { lastFired: stamp });
+      Store.updateReminder(r.id, { lastFired: stamp }, true);
       if ("Notification" in window && Notification.permission === "granted") {
         try { new Notification("YourGATEBuddy", { body: r.title, icon: "assets/img/logo.svg", tag: r.id }); } catch (_) { /* some mobile browsers need a service worker */ }
       }
@@ -718,7 +768,7 @@
       </form>
       <div class="card stack">
         <div class="card-title" style="margin:0">${icon("shield")} Your data</div>
-        <p class="small muted" style="margin:0">Your progress is stored on this device. Export a backup to move it to another device.</p>
+        <p class="small muted" style="margin:0">${signedIn() ? `Your progress is synced to <b>${esc(cloud().user.email)}</b>. You can also export a backup file.` : "Your progress is stored on this device. Sign in to sync it, or export a backup file."}</p>
         <div class="row">
           <button class="btn btn-ghost" id="export">${icon("download")} Export</button>
           <label class="btn btn-ghost">${icon("upload")} Import<input type="file" id="import" accept="application/json" hidden/></label>
@@ -745,7 +795,12 @@
       try { const key = Store.get().settings.apiKey; Store.importJSON(await file.text()); if (!Store.get().settings.apiKey) Store.setSettings({ apiKey: key }); toast("Backup imported"); applyTheme(); render(); }
       catch (_) { toast("That file isn't a valid backup.", "shield"); }
     });
-    $("#reset").addEventListener("click", () => {
+    $("#reset").addEventListener("click", async () => {
+      if (signedIn()) {
+        if (!confirm("This permanently deletes ALL your progress, history and reminders from your account and this device. Continue?")) return;
+        try { await cloud().wipe(); toast("All data deleted", "trash"); location.hash = "#/onboard"; } catch (e) { toast("Couldn't delete cloud data. Check your connection.", "trash"); }
+        return;
+      }
       if (confirm("This deletes all your progress, reminders and settings on this device. Continue?")) { Store.reset(); applyTheme(); location.hash = "#/home"; }
     });
   };
@@ -757,9 +812,10 @@
     return `
     <div class="page-head"><h1>Profile</h1></div>
     <div class="grid grid-2" style="align-items:start">
+      ${accountCard()}
       <div class="card">
         <div class="row" style="gap:16px">
-          <div class="bicon" style="width:64px;height:64px;border-radius:18px;display:grid;place-items:center;color:#fff;font-size:1.6rem;font-weight:800;background:linear-gradient(135deg,var(--primary),var(--primary-2))">${esc((p.name || "A").charAt(0).toUpperCase())}</div>
+          ${avatar(64)}
           <div><h2 style="margin:0">${esc(p.name || "Aspirant")}</h2><div class="muted small">GATE ${esc(p.targetYear)} · ${esc(b.name)}</div></div>
         </div>
         <div class="grid grid-3" style="margin-top:20px;text-align:center">
@@ -780,13 +836,138 @@
       </form>
     </div>`;
   };
+  function accountCard() {
+    const c = cloud();
+    if (!c.configured) return "";
+    if (!c.user) return `<div class="card stack"><div class="card-title" style="margin:0">${icon("cloud")} Account</div>
+      <p class="muted small" style="margin:0">You're using YourGATEBuddy as a guest, so your progress is saved only on this device. Sign in to back it up and use it on any device.</p>
+      <a class="btn btn-primary" href="#/signin">${icon("login")} Sign in or create an account</a></div>`;
+    return `<div class="card stack"><div class="card-title" style="margin:0">${icon("cloud")} Account</div>
+      <div class="row">${avatar(40)}<div class="grow" style="min-width:0"><b>${esc(c.user.name || Store.get().profile.name || "Signed in")}</b><div class="muted small" style="overflow-wrap:anywhere">${esc(c.user.email)}</div></div></div>
+      <div class="sync-line small ${c.status === "error" ? "err" : ""}" id="sync-line">${icon("cloud")}<span>${esc(syncLabel())}</span></div>
+      <div class="row"><button class="btn btn-ghost btn-sm" id="sync-now">${icon("refresh")} Sync now</button><button class="btn btn-ghost btn-sm" id="sign-out">${icon("logout")} Sign out</button></div></div>`;
+  }
+  function bindAccount() {
+    $("#sync-now")?.addEventListener("click", async () => { await cloud().syncNow(); toast(cloud().status === "synced" ? "Everything is synced" : syncLabel(), "cloud"); });
+    $("#sign-out")?.addEventListener("click", async () => {
+      if (!confirm("Sign out? Your progress stays saved in your account and is removed from this device.")) return;
+      try { await cloud().signOut(); toast("Signed out", "logout"); location.hash = "#/home"; } catch (e) { toast(e.message, "logout"); }
+    });
+  }
   views.profile.mount = () => {
+    bindAccount();
     $("#profile-form").addEventListener("submit", (e) => {
       e.preventDefault();
       const f = e.target;
       Store.setProfile({ name: f.name.value.trim(), branch: f.branch.value, targetYear: f.targetYear.value, examDate: f.examDate.value, dailyGoal: Math.max(5, parseInt(f.dailyGoal.value, 10) || 20) });
       quiz.phase = "setup";
       toast("Profile updated"); render();
+    });
+  };
+
+  // Sign in
+  const authUI = { tab: "signin", busy: false };
+  views.signin = () => {
+    const c = cloud();
+    if (!c.configured) return `<div class="auth-wrap card stack"><h1>Sign in</h1><p class="muted">Accounts aren't set up on this site yet. The site owner needs to add a Firebase config in <code>assets/js/firebase-config.js</code>. See the README for steps.</p><a class="btn btn-primary" href="#/">Continue as guest</a></div>`;
+    if (!c.ready) return `<div class="auth-wrap card" style="text-align:center"><div class="spinner"></div><p class="muted">Loading…</p></div>`;
+    if (c.user) return `<div class="auth-wrap card stack" style="text-align:center"><div style="display:flex;justify-content:center">${avatar(64)}</div><h2>You're signed in</h2><p class="muted">${esc(c.user.email)}</p><a class="btn btn-primary" href="#/dashboard">Go to dashboard ${icon("arrow")}</a></div>`;
+    const up = authUI.tab === "signup", reset = authUI.tab === "reset";
+    return `
+    <div class="auth-wrap">
+      <div class="card stack">
+        <div style="text-align:center">
+          <img src="assets/img/logo.svg" alt="" width="52" height="52" style="margin:0 auto 12px;border-radius:14px"/>
+          <h1 style="font-size:1.6rem;margin-bottom:4px">${reset ? "Reset your password" : up ? "Create your account" : "Welcome back"}</h1>
+          <p class="muted small" style="margin:0">${reset ? "We'll email you a link to set a new password." : "Keep your progress, quiz history and activity on every device."}</p>
+        </div>
+        ${reset ? "" : `<button class="btn btn-ghost btn-block btn-lg" id="google-btn" ${authUI.busy ? "disabled" : ""}>${GOOGLE_SVG} Continue with Google</button>
+        <div class="divider"><span>or use email</span></div>`}
+        <form id="auth-form" class="stack">
+          ${up ? `<label class="field"><span>Your name</span><input name="name" maxlength="40" autocomplete="name" required placeholder="e.g. Aarav Sharma"/></label>` : ""}
+          <label class="field"><span>Email</span><input type="email" name="email" autocomplete="email" required placeholder="you@example.com"/></label>
+          ${reset ? "" : `<label class="field"><span class="spread">Password ${up ? "" : `<a href="#" data-tab="reset" class="small">Forgot password?</a>`}</span><input type="password" name="password" minlength="6" required autocomplete="${up ? "new-password" : "current-password"}" placeholder="${up ? "At least 6 characters" : "Your password"}"/></label>`}
+          <p class="auth-error small" id="auth-error" hidden></p>
+          <button class="btn btn-primary btn-block btn-lg" type="submit" ${authUI.busy ? "disabled" : ""}>${reset ? `${icon("mail")} Send reset link` : up ? "Create account" : `${icon("login")} Sign in`}</button>
+        </form>
+        <p class="small muted" style="text-align:center;margin:0">
+          ${reset ? `<a href="#" data-tab="signin">← Back to sign in</a>` : up ? `Already have an account? <a href="#" data-tab="signin">Sign in</a>` : `New to YourGATEBuddy? <a href="#" data-tab="signup">Create an account</a>`}
+        </p>
+      </div>
+      <p class="small muted" style="text-align:center;margin-top:16px">${Store.get().profile ? `<a href="#/dashboard">Continue without signing in</a>` : `<a href="#/onboard">Continue as guest</a>`} · By continuing you agree to our <a href="terms.html">Terms</a> and <a href="privacy.html">Privacy Policy</a>.</p>
+    </div>`;
+  };
+  views.signin.mount = () => {
+    const c = cloud();
+    if (!c.configured || !c.ready || c.user) return;
+    $$("[data-tab]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); authUI.tab = a.dataset.tab; render(); }));
+    const showErr = (m) => { const el = $("#auth-error"); el.textContent = m; el.hidden = !m; };
+    const run = async (fn) => {
+      authUI.busy = true; $$("#auth-form button, #google-btn").forEach((b) => { b.disabled = true; });
+      try { await fn(); } catch (e) { authUI.busy = false; $$("#auth-form button, #google-btn").forEach((b) => { b.disabled = false; }); showErr(e.message); return; }
+      authUI.busy = false;
+    };
+    $("#google-btn")?.addEventListener("click", () => run(() => c.signInGoogle()));
+    $("#auth-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const f = e.target, email = f.email.value.trim();
+      if (authUI.tab === "reset") return run(async () => { await c.resetPassword(email); toast("Password reset email sent. Check your inbox.", "mail"); authUI.tab = "signin"; render(); });
+      if (authUI.tab === "signup") return run(() => c.signUpEmail(f.name.value.trim(), email, f.password.value));
+      return run(() => c.signInEmail(email, f.password.value));
+    });
+  };
+
+  // History (activity log + saved questions)
+  const histUI = { tab: "activity", filter: "all" };
+  const EVENT_META = { quiz: ["spark", "Quiz"], study: ["book", "Study"], reminder: ["bell", "Reminder"], saved: ["bookmark", "Saved"], account: ["user", "Account"] };
+  views.history = () => {
+    const st = Store.get();
+    const tabs = `<div class="seg" id="hist-tabs"><button data-t="activity" class="${histUI.tab === "activity" ? "on" : ""}">${"Activity"}</button><button data-t="saved" class="${histUI.tab === "saved" ? "on" : ""}">Saved questions (${st.saved.length})</button></div>`;
+    let body;
+    if (histUI.tab === "saved") {
+      body = st.saved.length ? `
+        <div class="spread" style="margin-bottom:14px"><p class="muted small" style="margin:0">Questions you bookmarked during quizzes. Revise them any time.</p>
+          <button class="btn btn-primary btn-sm" id="practise-saved">${icon("target")} Practise ${Math.min(20, st.saved.length)} saved</button></div>
+        <div class="card">${st.saved.map((it, i) => { const b = branchById(it.branch) || BRANCHES[0]; return `
+          <div class="review-item">
+            <div class="spread"><span class="chip chip-primary">${esc(it.subject === "mixed" ? "Mixed" : subjectName(b, it.subject))}</span><button class="btn btn-ghost btn-sm" data-unsave="${i}">${icon("trash")}<span>Remove</span></button></div>
+            <p style="margin:8px 0;font-weight:600;white-space:pre-wrap">${esc(it.q)}</p>
+            <details class="small"><summary style="cursor:pointer;color:var(--primary);font-weight:600">Show answer</summary>
+              <div style="margin-top:6px">${it.o.map((o, j) => `<div style="${j === it.a ? "color:var(--success);font-weight:700" : ""}">${LETTERS[j]}. ${esc(o)}</div>`).join("")}</div>
+              ${it.ex ? `<div class="muted" style="margin-top:6px">${esc(it.ex)}</div>` : ""}</details>
+          </div>`; }).join("")}</div>`
+        : `<div class="card empty">${icon("bookmark")}<p style="margin-top:8px">No saved questions yet. Tap <b>Save</b> on any quiz question to build your own revision set.</p><a class="btn btn-primary btn-sm" href="#/quiz">Take a quiz</a></div>`;
+    } else {
+      const evs = st.events.filter((e) => histUI.filter === "all" || e.type === histUI.filter);
+      const groups = [];
+      evs.forEach((e) => {
+        const k = new Date(e.date).toDateString();
+        if (!groups.length || groups[groups.length - 1].k !== k) groups.push({ k, d: new Date(e.date), items: [] });
+        groups[groups.length - 1].items.push(e);
+      });
+      const today = new Date().toDateString(), yest = new Date(Date.now() - 864e5).toDateString();
+      body = `
+        <div class="seg" id="hist-filter" style="margin-bottom:14px">${[["all", "All"], ["quiz", "Quizzes"], ["study", "Study"], ["saved", "Saved"], ["reminder", "Reminders"], ["account", "Account"]]
+          .map(([k, l]) => `<button data-f="${k}" class="${histUI.filter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        ${groups.length ? groups.map((g) => `
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-title">${icon("cal")} ${g.k === today ? "Today" : g.k === yest ? "Yesterday" : g.d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
+            <ul class="timeline">${g.items.map((e) => { const [ic] = EVENT_META[e.type] || ["check"]; return `
+              <li><span class="tl-icon t-${esc(e.type)}">${icon(ic)}</span><div class="grow"><div>${esc(e.text)}</div><div class="muted small">${new Date(e.date).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</div></div></li>`; }).join("")}</ul>
+          </div>`).join("") : `<div class="card empty">No activity yet. Your quizzes, completed topics and other activity will appear here.</div>`}`;
+    }
+    return `
+    <div class="page-head spread"><div><h1>History</h1><p class="muted">Everything you've done on YourGATEBuddy${signedIn() ? ", synced to your account" : ""}.</p></div>${tabs}</div>
+    ${!signedIn() && cloud().configured ? `<div class="card banner" style="margin-bottom:16px">${icon("cloud")}<div class="grow small">Your history is saved only on this device. <a href="#/signin">Sign in</a> to keep it safe and use it on other devices.</div></div>` : ""}
+    ${body}`;
+  };
+  views.history.mount = () => {
+    $$("#hist-tabs button").forEach((b) => b.addEventListener("click", () => { histUI.tab = b.dataset.t; render(); }));
+    $$("#hist-filter button").forEach((b) => b.addEventListener("click", () => { histUI.filter = b.dataset.f; render(); }));
+    $$("[data-unsave]").forEach((b) => b.addEventListener("click", () => { const it = Store.get().saved[Number(b.dataset.unsave)]; if (it) { Store.toggleSaved(it, it.branch); render(); } }));
+    $("#practise-saved")?.addEventListener("click", () => {
+      const qs = shuffle(Store.get().saved).slice(0, 20).map((x) => ({ id: x.id, qid: x.id, q: x.q, o: x.o, a: x.a, ex: x.ex, subject: x.subject }));
+      startQuiz(qs, { mode: "saved", subject: "mixed", count: qs.length, branch: Store.get().profile.branch });
     });
   };
 
@@ -797,7 +978,7 @@
     const [path, query] = pathPart.split("?");
     return { route: path || "", params: new URLSearchParams(query || ""), anchor };
   }
-  const PRIVATE = ["dashboard", "study", "quiz", "progress", "reminders", "settings", "profile"];
+  const PRIVATE = ["dashboard", "study", "quiz", "progress", "reminders", "settings", "profile", "history"];
   let lastRoute = null;
 
   function render() {
@@ -812,7 +993,7 @@
     const main = $("#app");
     main.innerHTML = views[route](params);
     views[route].mount && views[route].mount(params);
-    const titles = { home: "AI GATE Preparation Companion", dashboard: "Dashboard", study: "Study", quiz: "Quiz", progress: "Progress", reminders: "Reminders", settings: "Settings", profile: "Profile", onboard: "Get started" };
+    const titles = { signin: "Sign in", history: "History", home: "AI GATE Preparation Companion", dashboard: "Dashboard", study: "Study", quiz: "Quiz", progress: "Progress", reminders: "Reminders", settings: "Settings", profile: "Profile", onboard: "Get started" };
     document.title = `YourGATEBuddy · ${titles[route] || "GATE Prep"}`;
     if (route !== lastRoute) {
       if (anchor) setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth" }), 30);
@@ -824,6 +1005,18 @@
   }
 
   window.addEventListener("hashchange", render);
+  window.addEventListener("gb:cloud", (e) => {
+    if (e.detail && e.detail.authChanged) {
+      applyTheme();
+      const { route } = parseHash();
+      // After signing in, send the learner on: dashboard if their account has a profile, otherwise onboarding.
+      if (route === "signin" && signedIn() && cloud().status !== "loading") { location.hash = Store.get().profile ? "#/dashboard" : "#/onboard"; return; }
+      render();
+    } else {
+      const line = $("#sync-line");
+      if (line) { line.querySelector("span").textContent = syncLabel(); line.classList.toggle("err", cloud().status === "error"); }
+    }
+  });
   applyTheme();
   render();
   checkReminders();
