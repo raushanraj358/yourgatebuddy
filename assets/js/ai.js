@@ -1,91 +1,140 @@
-/* YourGATEBuddy — AI quiz generation with Claude.
- *
- * This is a static site with no backend or build step, so it calls the Claude Messages API over
- * HTTP from the browser using the learner's own API key (saved only in their browser).
- * For a public launch, move this call behind a small server or serverless function that holds the
- * key, and point ENDPOINT at it.
- */
-(function () {
-  "use strict";
+// AI client. Uses the visitor's own key from Settings if present, otherwise the site's free AI
+// (a Supabase Edge Function that holds the Gemini key and enforces a daily allowance per user / per guest).
+import { S } from './store.js';
+import { buildMessages } from './prompts.js';
+import { callAI, ProviderError, AI_MESSAGES } from './providers.js';
+import { config, aiEndpoint } from './config.js';
+import { accessToken, cloud } from './cloud.js';
+import { dateKey } from './utils.js';
 
-  const ENDPOINT = "https://api.anthropic.com/v1/messages";
+const USE_KEY = 'ygb:aiuse';
+/** Free AI requests used today, as last reported by the server: { used, limit }. */
+export function aiUsage() {
+  const limit = cloud().user ? config().aiDailyLimit : config().aiGuestLimit;
+  try {
+    const u = JSON.parse(localStorage.getItem(USE_KEY)) || {};
+    if (u.date === dateKey() && u.who === (cloud().user?.id || 'guest')) return { used: u.used || 0, limit: u.limit || limit };
+  } catch {}
+  return { used: 0, limit };
+}
+function saveUse(used, limit) {
+  try { localStorage.setItem(USE_KEY, JSON.stringify({ date: dateKey(), who: cloud().user?.id || 'guest', used, limit })); } catch {}
+}
 
-  const SCHEMA = {
-    type: "object",
-    additionalProperties: false,
-    required: ["questions"],
-    properties: {
-      questions: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["question", "options", "answer_index", "explanation"],
-          properties: {
-            question: { type: "string" },
-            options: { type: "array", items: { type: "string" } },
-            answer_index: { type: "integer" },
-            explanation: { type: "string" },
-          },
-        },
-      },
-    },
-  };
+const NETWORK_MSG = 'Could not reach the AI service. Check your internet connection and try again.';
 
-  const DIFF = { 1: "easy (concept check)", 2: "medium (typical GATE 1-mark)", 3: "hard (typical GATE 2-mark, multi-step)" };
+// Only our own, user-friendly server messages are shown as-is; anything else (e.g. raw provider text) becomes a standard message.
+const SAFE_SERVER_MSG = /^(You've used today's|Guests get|The free AI is busy|The AI couldn't answer|The AI is taking too long|The answer was too long)/;
+function serverError(status, data) {
+  const msg = typeof data?.error === 'string' ? data.error : '';
+  if (msg && SAFE_SERVER_MSG.test(msg)) return new AIError(msg, status === 429 ? 'RATE' : 'API');
+  if (msg) console.warn(`[AI server ${status}]`, msg);
+  if (status === 429) return new AIError(AI_MESSAGES.RATE, 'RATE');
+  if (status === 404 || status === 501) return new AIError('The free AI is not available right now. You can add your own free Gemini key in Settings.', 'NO_KEY');
+  if (status === 400) return new AIError("That request couldn't be processed. Please check what you entered and try again.", 'API');
+  return new AIError(AI_MESSAGES.API, 'API');
+}
 
-  async function generateQuiz({ apiKey, model, branchName, subjectName, topic, count, difficulty }) {
-    if (!apiKey) throw new Error("Add your Claude API key in Settings to use AI quizzes.");
+/** A message that is always safe to show people: ours if we wrote it, otherwise a standard one. */
+export function friendlyError(e) {
+  if (e instanceof AIError || e instanceof ProviderError) return e.message;
+  if (e) console.warn('[error]', e);
+  return AI_MESSAGES.API;
+}
 
-    const prompt =
-      `Write ${count} original multiple-choice questions for GATE ${branchName} aspirants.\n` +
-      `Subject: ${subjectName}${topic ? `\nFocus topic: ${topic}` : ""}\n` +
-      `Difficulty: ${DIFF[difficulty] || DIFF[2]}\n\n` +
-      `Match the style and syllabus of the GATE exam conducted by the IITs. Each question has exactly 4 options ` +
-      `and exactly one correct option; answer_index is 0-based. Keep numerical values simple enough to solve with ` +
-      `the GATE virtual calculator. Explanations should show the key step in 1–3 sentences. ` +
-      `Use plain text with Unicode symbols (², √, π, ≤) rather than LaTeX. Double-check every answer.`;
-
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2026-10-21",
-        "anthropic-beta": "server-side-fallback-2026-07-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model: model || "claude-opus-5-5",
-        max_tokens: 16000,
-        output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
-        fallbacks: "default", // if a safety classifier declines, the API retries on a fallback model
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-
-    let data;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) {
-      const msg = data && data.error && data.error.message;
-      if (res.status === 401) throw new Error("Your API key was rejected. Check it in Settings.");
-      if (res.status === 429) throw new Error("Rate limited by the API. Wait a moment and try again.");
-      throw new Error(msg || `AI request failed (HTTP ${res.status}).`);
-    }
-    if (data.stop_reason === "refusal") throw new Error("The AI declined this request. Try a different topic.");
-    if (data.stop_reason === "max_tokens") throw new Error("The response was cut off. Try fewer questions.");
-
-    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) { throw new Error("The AI returned an unreadable response. Please retry."); }
-
-    const questions = (parsed.questions || [])
-      .filter((x) => x && Array.isArray(x.options) && x.options.length === 4 &&
-        Number.isInteger(x.answer_index) && x.answer_index >= 0 && x.answer_index < 4)
-      .map((x, i) => ({ id: "ai" + Date.now() + i, q: x.question, o: x.options, a: x.answer_index, ex: x.explanation, ai: true }));
-    if (!questions.length) throw new Error("No valid questions came back. Please retry.");
-    return questions;
+export class AIError extends Error {
+  constructor(msg, code) {
+    super(msg);
+    this.code = code;
   }
+}
 
-  window.GB_AI = { generateQuiz };
-})();
+function parseJSON(text) {
+  if (!text) throw new AIError('Empty response from AI', 'EMPTY');
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (m) {
+      try { return JSON.parse(m[0]); } catch {}
+    }
+    throw new AIError('The AI returned an unreadable response. Please try again.', 'PARSE');
+  }
+}
+
+export function activeAI() {
+  const s = S().settings;
+  const provider = s.provider === 'openai' ? 'openai' : 'gemini';
+  return provider === 'openai'
+    ? { provider, key: s.apiKey, model: s.model || 'gpt-4o-mini' }
+    : { provider, key: s.geminiKey, model: s.geminiModel || 'auto' };
+}
+
+export async function runAI(task, params, { signal } = {}) {
+  const { provider, key, model } = activeAI();
+  let content;
+
+  if (key) {
+    try {
+      content = await callAI({ provider, key, model, messages: buildMessages(task, params), signal });
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      if (e instanceof ProviderError) throw new AIError(e.message, e.code || 'API');
+      console.warn('[AI]', e);
+      throw new AIError(NETWORK_MSG, 'API');
+    }
+  } else {
+    if (!config().serverAI) throw new AIError('AI is not set up on this site yet. Add your free Gemini API key in Settings (takes 1 minute).', 'NO_KEY');
+    const token = (await accessToken()) || config().supabaseAnonKey;
+    let res;
+    try {
+      res = await fetch(aiEndpoint(), {
+        method: 'POST',
+        signal,
+        headers: { 'Content-Type': 'application/json', apikey: config().supabaseAnonKey, Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ task, params }),
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      throw new AIError(NETWORK_MSG, 'API');
+    }
+    const data = await res.json().catch(() => null);
+    if (data && Number.isFinite(data.used)) saveUse(data.used, data.limit);
+    if (!res.ok || !data) {
+      // A gateway timeout from Supabase has no JSON body of ours.
+      if (!data && [504, 546].includes(res.status)) throw new AIError(AI_MESSAGES.TIMEOUT, 'TIMEOUT');
+      throw serverError(res.ok ? 502 : res.status, data);
+    }
+    content = data.content;
+  }
+  return parseJSON(content);
+}
+
+export function hasAI() {
+  const s = S().settings;
+  return Boolean(s.geminiKey || s.apiKey) || config().serverAI;
+}
+/** True when the visitor is using the site's built-in (shared) AI rather than their own key. */
+export function usingServerAI() {
+  const { key } = activeAI();
+  return !key && config().serverAI;
+}
+
+/** Normalise & validate MCQs coming back from the model. */
+export function cleanMCQs(raw) {
+  const list = Array.isArray(raw?.questions) ? raw.questions : Array.isArray(raw) ? raw : [];
+  return list
+    .map((q) => ({
+      passage: String(q.passage || ''),
+      stem: String(q.stem || q.question || ''),
+      statements: Array.isArray(q.statements) ? q.statements.map(String).filter(Boolean) : [],
+      ask: String(q.ask || ''),
+      options: Array.isArray(q.options) ? q.options.map(String).slice(0, 4) : [],
+      answer: Number(q.answer),
+      marks: Number(q.marks) === 2 ? 2 : 1,
+      explanation: String(q.explanation || ''),
+      concept: String(q.concept || ''),
+    }))
+    .filter((q) => q.stem && q.options.length === 4 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < 4);
+}

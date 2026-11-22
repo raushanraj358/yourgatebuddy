@@ -3,48 +3,70 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>YourGATEBuddy · AI GATE Preparation Companion</title>
-  <meta name="description" content="Free AI-powered GATE preparation companion for CSE/IT, Electrical, ECE, Mechanical, Civil, Instrumentation, Chemical and Data Science. AI quizzes, progress tracking, syllabus tracker and study reminders." />
-  <meta name="theme-color" content="#4f46e5" />
+  <title>YourGATEBuddy — GATE Study Companion</title>
+  <meta name="description" content="YourGATEBuddy: a free GATE study companion for CSE/IT, Electrical, ECE, Mechanical, Civil, Instrumentation, Chemical and Data Science & AI. Syllabus tracker, study plan, offline topic tests, AI quizzes and notes, practice papers, goals, reminders and progress tracking." />
+  <meta name="theme-color" content="#0f1a1c" />
   <meta property="og:title" content="YourGATEBuddy — Prepare · Practise · Revise · Crack GATE" />
-  <meta property="og:description" content="AI quizzes, progress tracking and study reminders for every GATE paper." />
+  <meta property="og:description" content="Syllabus tracker, study plan, AI quizzes and notes, practice papers and progress tracking for every GATE paper." />
   <meta property="og:url" content="https://yourgatebuddy.com/" />
-  <link rel="icon" href="assets/img/logo.svg" type="image/svg+xml" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="assets/img/icon-32.png" type="image/png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="assets/img/icon-180.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/styles.css" />
+  <script>
+    // Apply theme before paint to avoid a flash.
+    try {
+      var s = JSON.parse(localStorage.getItem('ygb:v1') || '{}');
+      var t = (s.settings && s.settings.theme) || 'system';
+      if (t !== 'system') document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <a class="brand" href="#/">
-        <img class="brand-mark" src="assets/img/logo.svg" alt="" width="34" height="34" />
-        <span>YourGATE<b>Buddy</b><small>Prepare · Practise · Revise · Crack GATE</small></span>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#/dashboard" aria-label="YourGATEBuddy home">
+        <img class="brand-mark" src="assets/img/logo-mark.png" alt="" width="46" height="46" />
+        <span class="brand-text"><span class="brand-name">Your<b>GATE</b>Buddy<i>.com</i></span><span class="brand-tag">Prepare · Practise · Revise · Crack GATE</span></span>
       </a>
-      <nav id="nav" class="nav" aria-label="Main"></nav>
+      <nav class="nav" id="nav" aria-label="Main"></nav>
+      <div class="sidebar-foot">
+        <div class="countdown-card" id="countdownCard"></div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <a class="brand-mini" href="#/dashboard" aria-label="YourGATEBuddy home"><img class="brand-mark" src="assets/img/logo-mark.png" alt="" width="40" height="40" /></a>
+        <div class="topbar-title">
+          <h1 id="pageTitle">Dashboard</h1>
+          <p id="pageSub" class="muted"></p>
+        </div>
+        <div class="topbar-actions">
+          <a class="timer-chip" id="timerChip" href="#/study" hidden></a>
+          <a class="icon-btn mobile-only" href="#/reminders" id="remBtn" title="Reminders" aria-label="Reminders"></a>
+          <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"></button>
+          <a class="icon-btn" href="#/settings" title="Settings" aria-label="Settings" id="settingsBtn"></a>
+          <a class="icon-btn account-btn" href="#/profile" title="Profile" aria-label="Profile" id="accountBtn"></a>
+        </div>
+      </header>
+      <main id="view" class="view" tabindex="-1"></main>
+      <footer class="site-footer">
+        <span class="footer-copy">© <span id="year">2026</span> YourGATEBuddy</span>
+        <nav class="footer-links" aria-label="Legal"><a href="privacy.html">Privacy</a><span aria-hidden="true">·</span><a href="terms.html">Terms</a></nav>
+        <p class="footer-credit">Designed and Developed by <a class="credit" href="https://raushanraj.in" target="_blank" rel="noopener">Raushan Raj</a></p>
+      </footer>
     </div>
-  </header>
 
-  <main id="app" tabindex="-1">
-    <noscript><p>YourGATEBuddy needs JavaScript enabled to run.</p></noscript>
-  </main>
+    <nav class="tabbar" id="tabbar" aria-label="Mobile"></nav>
+  </div>
 
-  <nav id="tabbar" class="tabbar" aria-label="App"></nav>
-  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modalRoot"></div>
 
-  <footer class="footer">
-    <div class="footer-inner">
-      <span>© <span id="year">2026</span> YourGATEBuddy · Not affiliated with IITs or the GATE organising institute.</span>
-      <nav><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><span>Designed and developed by <a href="https://raushanraj.in" target="_blank" rel="noopener">Raushan Raj</a></span></nav>
-    </div>
-  </footer>
-
-  <script src="assets/js/firebase-config.js"></script>
-  <script src="assets/js/data.js"></script>
-  <script src="assets/js/store.js"></script>
-  <script src="assets/js/ai.js"></script>
-  <script src="assets/js/app.js"></script>
-  <script type="module" src="assets/js/cloud.js"></script>
+  <script type="module" src="assets/js/app.js"></script>
 </body>
 </html>

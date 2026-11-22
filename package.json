@@ -1,0 +1,10 @@
+{
+  "name": "yourgatebuddy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "YourGATEBuddy — GATE study companion (static site on GitHub Pages + Supabase for accounts and AI)",
+  "engines": {
+    "node": ">=18"
+  }
+}

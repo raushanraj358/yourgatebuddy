@@ -1,1101 +1,257 @@
-/* YourGATEBuddy — single-page app (hash router + views). */
-(function () {
-  "use strict";
-  const { BRANCHES, BANK, TIPS } = window.GB_DATA;
-  const Store = window.GB_STORE;
-  const AI = window.GB_AI;
+import { S, commit, subscribe, daysToExam, journeyProgress, notesDue } from './store.js';
+import { icon } from './icons.js';
+import { $, esc, fmtClock, fmtDate, dateKey } from './utils.js';
+import { openModal, toast } from './ui.js';
+import * as timer from './timer.js';
+import { checkReminders } from './reminders-engine.js';
+import { subjectById, setBranch, BRANCH, BRANCHES } from './data.js';
 
-  // ---------- helpers ----------
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const branchById = (id) => BRANCHES.find((b) => b.id === id);
-  const subjectName = (branch, sid) => (branch.subjects.find((x) => x.id === sid) || {}).name || "Mixed";
-  const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const LETTERS = ["A", "B", "C", "D"];
-  const fmtTime = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-  const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-  const DEFAULT_EXAM = "2027-02-06"; // tentative — learners can change this in Profile
+import * as dashboard from './views/dashboard.js';
+import * as tracker from './views/tracker.js';
+import * as study from './views/study.js';
+import * as quiz from './views/quiz.js';
+import * as notes from './views/notes.js';
+import * as resources from './views/resources.js';
+import * as reminders from './views/reminders.js';
+import * as settings from './views/settings.js';
+import * as profile from './views/profile.js';
+import * as syllabus from './views/syllabus.js';
+import * as goals from './views/goals.js';
+import { initCloud, cloud, onCloudChange } from './cloud.js';
 
-  const ICONS = {
-    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>',
-    book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>',
-    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
-    chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
-    bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68 1.65 1.65 0 0 0 10 3.17V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.38.37.72.68 1 .31.27.7.43 1.11.44H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
-    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-    flame: '<path d="M12 22c4 0 7-3 7-7 0-4-3-6-4-10-2 2-3 4-3 6-1-1-2-2-2-4-3 3-5 5-5 8 0 4 3 7 7 7z"/>',
-    target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
-    check: '<path d="M20 6 9 17l-5-5"/>',
-    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-    trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>',
-    cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
-    chev: '<path d="m6 9 6 6 6-6"/>',
-    arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
-    bulb: '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"/>',
-    cpu: '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
-    bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
-    wave: '<path d="M2 12h3l3-8 4 16 3-8h7"/>',
-    building: '<rect x="4" y="2" width="16" height="20" rx="1"/><path d="M9 6h1M14 6h1M9 10h1M14 10h1M9 14h1M14 14h1M10 22v-4h4v4"/>',
-    gauge: '<path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/>',
-    flask: '<path d="M9 3h6"/><path d="M10 3v6L4 20a1 1 0 0 0 .9 1.5h14.2A1 1 0 0 0 20 20l-6-11V3"/><path d="M7 15h10"/>',
-    brain: '<path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 1 5 3 3 0 0 0 4 4 3 3 0 0 0 3-2V5a3 3 0 0 0-3-2z"/><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-1 5 3 3 0 0 1-4 4 3 3 0 0 1-3-2"/>',
-    download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
-    upload: '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/>',
-    key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/>',
-    refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
-    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
-    history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
-    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
-    login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
-    bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
-    mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
-    cloud: '<path d="M17.5 19H7a5 5 0 1 1 1.1-9.9A6 6 0 0 1 19.5 11a4 4 0 0 1-2 8z"/>',
-    print: '<path d="M6 9V2h12v7"/><rect x="6" y="14" width="12" height="8"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>',
-  };
-  const GOOGLE_SVG = '<svg class="icon" viewBox="0 0 48 48" aria-hidden="true" style="stroke:none"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
-  const cloud = () => window.GB_CLOUD || { configured: false, ready: false, user: null, status: "idle" };
-  const signedIn = () => !!cloud().user;
-  function avatar(size = 32) {
-    const u = cloud().user, p = Store.get().profile;
-    const name = (u && u.name) || (p && p.name) || "A";
-    if (u && u.photo) return `<img src="${esc(u.photo)}" alt="" referrerpolicy="no-referrer" width="${size}" height="${size}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover"/>`;
-    return `<span class="avatar" style="width:${size}px;height:${size}px;font-size:${Math.round(size * .42)}px">${esc(name.charAt(0).toUpperCase())}</span>`;
-  }
-  function syncLabel() {
-    const c = cloud();
-    if (!c.user) return "";
-    return { loading: "Loading your data…", syncing: "Syncing…", synced: "All changes saved", offline: "Offline: will sync when you reconnect", error: c.error || "Sync error", idle: "Signed in" }[c.status] || "";
-  }
-  const icon = (name, cls = "icon") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+const ROUTES = {
+  dashboard: { title: 'Dashboard', icon: 'home', view: dashboard, group: 'Plan', tab: 'Home' },
+  goals: { title: 'Goals', icon: 'flag', view: goals, group: 'Plan', tab: 'Goals', sub: 'Weekly targets, target score and your own goals' },
+  tracker: { title: 'Daily Tracker', icon: 'tracker', view: tracker, group: 'Plan', tab: 'Tracker', sub: 'Plan the day, build habits, review consistency' },
+  study: { title: 'Study Hours', icon: 'timer', view: study, group: 'Plan', tab: 'Timer', sub: 'Focus timer, logs and analytics' },
+  reminders: { title: 'Reminders', icon: 'bell', view: reminders, group: 'Plan', sub: 'Never miss your routine' },
+  syllabus: { title: 'Study Material', icon: 'book', view: syllabus, group: 'Learn', tab: 'Study', sub: 'Your GATE syllabus, subject by subject' },
+  quiz: { title: 'Quiz & Mock Tests', icon: 'target', view: quiz, group: 'Learn', tab: 'Quiz', sub: 'Offline topic tests, AI quizzes and timed GATE practice papers' },
+  notes: { title: 'Notes', icon: 'notes', view: notes, group: 'Learn', tab: 'Notes', sub: 'Your notebook with spaced revision' },
+  resources: { title: 'Resources', icon: 'library', view: resources, group: 'Learn', sub: 'Curated sources and your own reading list' },
+  profile: { title: 'Profile', icon: 'user', view: profile, group: 'You', sub: 'Your account, paper, goal and journey so far' },
+  settings: { title: 'Settings', icon: 'settings', view: settings, group: 'You', sub: 'AI, appearance and data' },
+};
 
-  function toast(msg, ico = "check") {
-    const box = $("#toasts");
-    const el = document.createElement("div");
-    el.className = "toast";
-    el.innerHTML = `${icon(ico)}<div>${esc(msg)}</div>`;
-    box.appendChild(el);
-    setTimeout(() => el.remove(), 4200);
-  }
-
-  function applyTheme() {
-    const t = Store.get().settings.theme;
-    if (t === "system") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.setAttribute("data-theme", t);
-  }
-
-  function download(name, text, type = "text/plain") {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type }));
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }
-
-  // ---------- chrome (nav) ----------
-  const APP_NAV = [
-    { r: "dashboard", label: "Dashboard", ic: "home" },
-    { r: "study", label: "Study", ic: "book" },
-    { r: "quiz", label: "AI Quiz", ic: "spark" },
-    { r: "progress", label: "Progress", ic: "chart" },
-    { r: "reminders", label: "Reminders", ic: "bell" },
-  ];
-  function renderChrome(route) {
-    const onboarded = !!Store.get().profile;
-    const publicRoute = !onboarded || route === "home" || route === "onboard" || route === "signin";
-    document.body.classList.toggle("app-mode", !publicRoute);
-    const nav = $("#nav");
-    if (publicRoute) {
-      nav.className = "nav nav-public";
-      nav.innerHTML = `
-        <a href="#/home#features">Features</a>
-        <a href="#/home#branches">Branches</a>
-        <a href="#/home#how">How it works</a>
-        ${cloud().configured && !signedIn() ? `<a href="#/signin" class="signin-link keep-mobile">${icon("login")}<span>Sign in</span></a>` : ""}
-        <a class="btn btn-primary btn-sm" href="${onboarded ? "#/dashboard" : "#/onboard"}">${onboarded ? "Open dashboard" : "Start free"}</a>`;
-    } else {
-      nav.className = "nav";
-      nav.innerHTML = APP_NAV.map((n) => `<a href="#/${n.r}" class="${route === n.r ? "active" : ""}">${icon(n.ic)}<span>${n.label}</span></a>`).join("") +
-        `<a href="#/history" title="History" class="keep-mobile ${route === "history" ? "active" : ""}">${icon("history")}<span class="sr-only">History</span></a>
-         <a href="#/settings" title="Settings" class="keep-mobile ${route === "settings" ? "active" : ""}">${icon("gear")}<span class="sr-only">Settings</span></a>
-         ${signedIn() ? `<a href="#/profile" title="Profile · ${esc(cloud().user.email)}" class="keep-mobile nav-avatar ${route === "profile" ? "active" : ""}">${avatar(28)}<span class="sr-only">Profile</span></a>`
-           : `<a href="#/profile" title="Profile" class="keep-mobile ${route === "profile" ? "active" : ""}">${icon("user")}<span class="sr-only">Profile</span></a>
-              ${cloud().configured ? `<a href="#/signin" class="keep-mobile btn btn-primary btn-sm">Sign in</a>` : ""}`}`;
+/* ---------- Navigation ---------- */
+function renderNav() {
+  const due = notesDue().length;
+  let html = '';
+  let group = '';
+  for (const [k, r] of Object.entries(ROUTES)) {
+    if (r.group !== group) {
+      group = r.group;
+      html += `<div class="nav-label">${group}</div>`;
     }
-    $("#tabbar").innerHTML = publicRoute ? "" : APP_NAV.map((n) =>
-      `<a href="#/${n.r}" class="${route === n.r ? "active" : ""}">${icon(n.ic)}<span>${n.label.replace("AI ", "")}</span></a>`).join("");
-    $("#tabbar").style.display = publicRoute ? "none" : "";
+    const badge = k === 'notes' && due ? `<span class="badge" title="Notes due for revision">${due}</span>` : '';
+    html += `<a href="#/${k}" data-route="${k}">${icon(r.icon, 19)}<span>${r.title}</span>${badge}</a>`;
   }
+  $('#nav').innerHTML = html;
+  $('#tabbar').innerHTML = Object.entries(ROUTES)
+    .filter(([, r]) => r.tab)
+    .map(([k, r]) => `<a href="#/${k}" data-route="${k}">${icon(r.icon, 20)}<span>${r.tab}</span></a>`)
+    .join('');
+  $('#settingsBtn').innerHTML = icon('settings', 18);
+  $('#remBtn').innerHTML = icon('bell', 18);
+  markActive();
+}
+function markActive() {
+  const cur = parseHash().route;
+  const tabOf = cur;
+  document.querySelectorAll('[data-route]').forEach((a) => a.classList.toggle('active', a.dataset.route === cur || (a.closest('#tabbar') && a.dataset.route === tabOf)));
+}
 
-  // ---------- views ----------
-  const views = {};
+function renderCountdown() {
+  const d = daysToExam();
+  const p = journeyProgress();
+  $('#countdownCard').innerHTML = `
+    <div class="lbl">Days to GATE · ${esc(BRANCH.id)}</div>
+    <div class="big">${d}</div>
+    <div class="sub">${fmtDate(S().profile.examDate, { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+    <div class="bar"><i style="width:${(p * 100).toFixed(1)}%"></i></div>`;
+}
 
-  // Landing
-  views.home = () => {
-    const onboarded = !!Store.get().profile;
-    const startHref = onboarded ? "#/dashboard" : "#/onboard";
-    return `
-    <section class="hero">
-      <div>
-        <span class="eyebrow">${icon("spark")} AI-powered GATE companion</span>
-        <h1>Prepare smarter.<br/><span class="grad">Crack GATE with confidence.</span></h1>
-        <p class="lead">YourGATEBuddy is a free study companion for every GATE paper: CSE/IT, Electrical, ECE, Mechanical, Civil and more. Practise with AI-generated quizzes, track your syllabus and accuracy, and get reminders so you keep studying every day.</p>
-        <div class="row">
-          <a class="btn btn-primary btn-lg" href="${startHref}">${onboarded ? "Go to dashboard" : "Start preparing — it's free"} ${icon("arrow")}</a>
-          <a class="btn btn-ghost btn-lg" href="#/home#features">Explore features</a>
-        </div>
-        <div class="hero-stats">
-          <div><b>${BRANCHES.length}</b><span>GATE papers</span></div>
-          <div><b>${BRANCHES.reduce((n, b) => n + b.subjects.reduce((m, s) => m + s.topics.length, 0), 0)}+</b><span>syllabus topics</span></div>
-          <div><b>∞</b><span>AI practice questions</span></div>
-        </div>
-      </div>
-      <div class="mock" aria-hidden="true">
-        <div class="card">
-          <div class="spread" style="margin-bottom:12px"><b>Today's AI Quiz</b><span class="chip chip-primary">Algorithms</span></div>
-          <div class="qtext" style="font-size:1rem">The worst-case time complexity of binary search on n sorted elements is</div>
-          <div class="options">
-            <div class="opt"><span class="key">A</span>O(1)</div>
-            <div class="opt correct"><span class="key">B</span>O(log n)</div>
-            <div class="opt"><span class="key">C</span>O(n)</div>
-          </div>
-        </div>
-        <div class="card float">
-          <div class="row" style="gap:14px"><div class="ring" style="--p:72;width:64px;height:64px"><div style="width:48px;height:48px"><b style="font-size:.95rem">72%</b></div></div>
-          <div><b>Syllabus</b><div class="muted small">🔥 12-day streak</div></div></div>
-        </div>
-      </div>
-    </section>
+function renderAccountBtn() {
+  const btn = $('#accountBtn');
+  const c = cloud();
+  const u = c.user;
+  btn.dataset.sync = u ? c.status : '';
+  const name = S().profile.name || u?.user_metadata?.full_name || u?.email || '';
+  if (u?.user_metadata?.avatar_url) btn.innerHTML = `<img src="${esc(u.user_metadata.avatar_url)}" alt="" referrerpolicy="no-referrer">`;
+  else if (u) btn.innerHTML = `<span class="avatar">${esc((name[0] || '?').toUpperCase())}</span>`;
+  else btn.innerHTML = icon('user', 18);
+  btn.title = u ? `Profile · ${u.email || 'signed in'}` : 'Profile · sign in to save your progress';
+}
 
-    <section class="section" id="features">
-      <div class="section-head"><h2>Everything you need to stay on track</h2><p>Built for the way GATE aspirants actually study: short daily sessions, steady revision and honest self-assessment.</p></div>
-      <div class="grid grid-3">
-        ${[
-          ["spark", "AI quiz generator", "Pick a subject and topic and get fresh GATE-style MCQs with step-by-step explanations, generated by Claude."],
-          ["target", "Smart practice", "A built-in question bank that leans toward your weakest subjects, so revision time goes where it's needed."],
-          ["chart", "Progress tracking", "Accuracy by subject, a daily activity chart, study streaks and quiz history."],
-          ["book", "Syllabus tracker", "The complete subject and topic list for your paper. Tick off topics as you finish them."],
-          ["bell", "Study reminders", "Daily or weekly reminders as browser notifications, and you can add them to Google or Apple Calendar."],
-          ["shield", "Private by design", "No sign-up needed. Your progress stays on your device, and you can export or import it any time."],
-        ].map(([ic, t, d]) => `<div class="card feature"><div class="ficon">${icon(ic)}</div><h3>${t}</h3><p>${d}</p></div>`).join("")}
-      </div>
-    </section>
-
-    <section class="section" id="branches">
-      <div class="section-head"><h2>Every major GATE paper</h2><p>The syllabus and practice questions for each paper, plus General Aptitude and Engineering Mathematics.</p></div>
-      <div class="grid grid-4">
-        ${BRANCHES.map((b) => `<a class="card branch-card" href="${onboarded ? "#/study" : "#/onboard?branch=" + b.id}">
-          <span class="bicon" style="background:${b.color}">${icon(b.icon)}</span>
-          <div><b>${b.short}</b><span>${b.id} · ${b.subjects.length} subjects</span></div></a>`).join("")}
-      </div>
-    </section>
-
-    <section class="section" id="how">
-      <div class="section-head"><h2>How it works</h2></div>
-      <div class="grid grid-3 steps">
-        <div class="card step"><h3>Pick your paper</h3><p class="muted">Choose your GATE branch, target year and daily question goal. It takes about 30 seconds.</p></div>
-        <div class="card step"><h3>Study &amp; practise</h3><p class="muted">Work through the syllabus and take a quick quiz every day, either from the question bank or AI-generated.</p></div>
-        <div class="card step"><h3>Track &amp; improve</h3><p class="muted">See your weak areas, keep your streak going, and let reminders keep you consistent.</p></div>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="card cta"><h2>Your GATE journey starts today</h2><p>Free to use. No account needed.</p><a class="btn btn-lg" href="${startHref}">${onboarded ? "Open dashboard" : "Get started"} ${icon("arrow")}</a></div>
-    </section>`;
-  };
-
-  // Onboarding
-  views.onboard = (params) => {
-    const p = Store.get().profile || {};
-    const pre = p.branch || params.get("branch") || "";
-    const year = new Date().getFullYear();
-    return `
-    <div style="max-width:860px;margin:0 auto">
-      <div class="page-head"><h1>Let's set up your prep</h1><p class="muted">Choose your GATE paper. You can change it later in your profile.${cloud().configured && !signedIn() ? ` Already have an account? <a href="#/signin">Sign in</a> to restore your progress.` : ""}</p></div>
-      <form id="onboard-form" class="stack">
-        <div class="grid grid-2" id="branch-pick">
-          ${BRANCHES.map((b) => `<button type="button" class="card branch-card ${pre === b.id ? "selected" : ""}" data-branch="${b.id}">
-            <span class="bicon" style="background:${b.color}">${icon(b.icon)}</span>
-            <div><b>${b.name}</b><span>Paper code ${b.id}</span></div></button>`).join("")}
-        </div>
-        <div class="card form-grid">
-          <label class="field"><span>Your name</span><input name="name" required maxlength="40" placeholder="e.g. Aarav" value="${esc(p.name || "")}"/></label>
-          <label class="field"><span>Target year</span><select name="targetYear">${[year, year + 1, year + 2].map((y) => `<option ${String(p.targetYear || year + 1) === String(y) ? "selected" : ""}>${y}</option>`).join("")}</select></label>
-          <label class="field"><span>Exam date (tentative)</span><input type="date" name="examDate" value="${esc(p.examDate || DEFAULT_EXAM)}"/></label>
-          <label class="field"><span>Daily goal (questions)</span><input type="number" name="dailyGoal" min="5" max="200" value="${esc(p.dailyGoal || 20)}"/></label>
-        </div>
-        <input type="hidden" name="branch" value="${esc(pre)}"/>
-        <button class="btn btn-primary btn-lg btn-block" type="submit">Continue to dashboard ${icon("arrow")}</button>
-      </form>
-    </div>`;
-  };
-  views.onboard.mount = () => {
-    const form = $("#onboard-form");
-    $$("#branch-pick [data-branch]").forEach((btn) => btn.addEventListener("click", () => {
-      $$("#branch-pick .branch-card").forEach((x) => x.classList.remove("selected"));
-      btn.classList.add("selected");
-      form.branch.value = btn.dataset.branch;
-    }));
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      if (!form.branch.value) { toast("Please choose your GATE paper first.", "target"); return; }
-      Store.setProfile({
-        name: form.name.value.trim(), branch: form.branch.value, targetYear: form.targetYear.value,
-        examDate: form.examDate.value, dailyGoal: Math.max(5, parseInt(form.dailyGoal.value, 10) || 20),
-      });
-      toast("You're all set. Good luck!");
-      location.hash = "#/dashboard";
-    });
-  };
-
-  // Dashboard
-  views.dashboard = () => {
-    const st = Store.get(), p = st.profile, b = branchById(p.branch);
-    const tot = Store.totals(b.id), syl = Store.syllabusProgress(b), streak = Store.streak();
-    const today = st.activity[Store.todayKey()] || 0, goal = p.dailyGoal || 20;
-    const examMs = new Date((p.examDate || DEFAULT_EXAM) + "T09:00:00") - new Date();
-    const days = Math.max(0, Math.ceil(examMs / 864e5));
-    const hour = new Date().getHours();
-    const greet = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-    const tip = TIPS[new Date().getDate() % TIPS.length];
-
-    const weak = Object.entries(tot.bySubject).filter(([, v]) => v.total >= 3)
-      .map(([sid, v]) => ({ sid, acc: Math.round((v.correct / v.total) * 100), n: v.total }))
-      .sort((a, c) => a.acc - c.acc).slice(0, 3);
-    const nextRem = upcomingReminders(3);
-
-    const banner = cloud().configured && cloud().ready && !signedIn()
-      ? `<div class="card banner">${icon("cloud")}<div class="grow"><b>Save your progress to your account</b><div class="muted small">Sign in to keep your quiz history, syllabus progress and activity on any device.</div></div><a class="btn btn-primary btn-sm" href="#/signin">Sign in</a></div>` : "";
-    return `
-    <div class="grid" style="grid-template-columns:minmax(0,1fr)">
-      ${banner}
-      <div class="card welcome">
-        <div class="spread" style="align-items:flex-start">
-          <div>
-            <h1 style="margin-bottom:4px">${greet}, ${esc(p.name || "Aspirant")} 👋</h1>
-            <p class="muted" style="margin:0">GATE ${esc(p.targetYear)} · ${esc(b.name)} (${b.id})</p>
-            <div class="countdown">
-              <div><b>${days}</b><span>days left</span></div>
-              <div><b>${Math.floor(days / 7)}</b><span>weeks</span></div>
-              <div><b>${syl.pct}%</b><span>syllabus</span></div>
-            </div>
-          </div>
-          <div class="row">
-            <a class="btn btn-primary" href="#/quiz?mode=smart">${icon("spark")} Daily quiz</a>
-            <a class="btn" href="#/study#plan">${icon("cal")} Study plan</a>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid grid-4">
-        ${statCard("flame", streak + (streak === 1 ? " day" : " days"), "Study streak")}
-        ${statCard("target", `${today}/${goal}`, "Today's questions")}
-        ${statCard("check", tot.accuracy + "%", "Overall accuracy")}
-        ${statCard("spark", tot.total, "Questions solved")}
-      </div>
-
-      <div class="grid grid-3">
-        <div class="card">
-          <div class="card-title">${icon("target")} Today's goal</div>
-          <div class="row" style="gap:18px">
-            <div class="ring" style="--p:${Math.min(100, Math.round((today / goal) * 100))}"><div><div><b>${Math.min(100, Math.round((today / goal) * 100))}%</b><span>${today} of ${goal}</span></div></div></div>
-            <div style="flex:1;min-width:140px">
-              <p class="muted small">${today >= goal ? "Goal complete. Great work! 🎉" : `${goal - today} more questions to reach today's goal.`}</p>
-              <a class="btn btn-primary btn-sm" href="#/quiz?mode=smart">Practise now</a>
-            </div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-title">${icon("chart")} Weak areas</div>
-          ${weak.length ? `<ul class="list">${weak.map((w) => `<li><div class="grow"><div class="spread"><span class="small"><b>${esc(subjectName(b, w.sid))}</b></span><span class="small muted">${w.acc}%</span></div>
-            <div class="bar ${w.acc < 50 ? "bad" : ""}" style="margin-top:6px"><i style="width:${w.acc}%"></i></div></div>
-            <a class="btn btn-ghost btn-sm" href="#/quiz?subject=${w.sid}">Fix</a></li>`).join("")}</ul>`
-            : `<div class="empty small">Take a few quizzes and your weakest subjects will show up here.</div>`}
-        </div>
-        <div class="card">
-          <div class="card-title">${icon("bell")} Upcoming reminders</div>
-          ${nextRem.length ? `<ul class="list">${nextRem.map((r) => `<li>${icon("clock")}<div class="grow"><b class="small">${esc(r.title)}</b><div class="muted small">${r.when}</div></div></li>`).join("")}</ul>`
-            : `<div class="empty small">No reminders yet.<br/><a href="#/reminders">Set a daily study reminder →</a></div>`}
-        </div>
-      </div>
-
-      <div class="grid grid-2">
-        <div class="card">
-          <div class="card-title">${icon("book")} Syllabus progress</div>
-          ${b.subjects.slice(0, 6).map((s) => { const pp = syl.per[s.id]; return `
-            <div style="margin-bottom:12px"><div class="spread small"><span>${esc(s.name)}</span><span class="muted">${pp.done}/${pp.all}</span></div>
-            <div class="bar" style="margin-top:6px"><i style="width:${pp.pct}%"></i></div></div>`; }).join("")}
-          <a href="#/study#syllabus" class="small">View full syllabus →</a>
-        </div>
-        <div class="card">
-          <div class="card-title">${icon("bulb")} Tip of the day</div>
-          <p>${esc(tip)}</p>
-          <div class="spread" style="margin-top:18px;margin-bottom:14px"><div class="card-title" style="margin:0">${icon("clock")} Recent quizzes</div><a class="small" href="#/history">Full history →</a></div>
-          ${st.attempts.length ? `<ul class="list">${st.attempts.slice(0, 3).map(attemptRow).join("")}</ul>` : `<div class="empty small">No quizzes yet. <a href="#/quiz">Take your first one →</a></div>`}
-        </div>
-      </div>
-    </div>`;
-  };
-  const statCard = (ic, val, label) => `<div class="card stat"><div class="sicon">${icon(ic)}</div><div><b>${esc(val)}</b><span>${label}</span></div></div>`;
-  function attemptRow(a) {
-    const b = branchById(a.branch) || BRANCHES[0];
-    const pct = Math.round((a.correct / a.total) * 100);
-    return `<li><span class="chip ${pct >= 70 ? "chip-success" : pct < 40 ? "chip-danger" : "chip-primary"}">${pct}%</span>
-      <div class="grow"><b class="small">${esc(a.subject === "mixed" ? "Smart mix" : subjectName(b, a.subject))}</b>${a.mode === "ai" ? ' <span class="chip chip-primary">AI</span>' : ""}
-      <div class="muted small">${a.correct}/${a.total} correct · ${new Date(a.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div></div></li>`;
-  }
-
-  // Study plan: spreads the unfinished topics over the weeks left before the exam,
-  // leaving the final stretch for revision and mock tests. High-weightage and weak subjects come first.
-  function buildPlan(b, p) {
-    const WEEK = 7 * 864e5;
-    const now = new Date(); now.setHours(0, 0, 0, 0);
-    const exam = new Date((p.examDate || DEFAULT_EXAM) + "T00:00:00");
-    const daysLeft = Math.max(0, Math.ceil((exam - now) / 864e5));
-    const weeksLeft = Math.max(0, Math.ceil(daysLeft / 7));
-    const revisionWeeks = weeksLeft >= 12 ? 4 : weeksLeft >= 6 ? 2 : weeksLeft >= 2 ? 1 : 0;
-    const learnWeeks = Math.max(1, weeksLeft - revisionWeeks);
-
-    const bySub = Store.totals(b.id).bySubject;
-    const pending = [];
-    b.subjects.forEach((s) => {
-      const acc = bySub[s.id] && bySub[s.id].total >= 3 ? bySub[s.id].correct / bySub[s.id].total : null;
-      const priority = (s.marks || 5) / s.topics.length * (acc === null ? 1.2 : 1.6 - acc);
-      s.topics.forEach((t, i) => { if (!Store.isStudied(b.id, s.id, i)) pending.push({ sid: s.id, sname: s.name, idx: i, name: t, priority, weak: acc !== null && acc < 0.6 }); });
-    });
-    // Keep a subject's topics together (in syllabus order) and order subjects by priority.
-    const order = [...new Set(pending.slice().sort((x, y) => y.priority - x.priority).map((x) => x.sid))];
-    pending.sort((x, y) => order.indexOf(x.sid) - order.indexOf(y.sid) || x.idx - y.idx);
-
-    const perWeek = Math.max(1, Math.ceil(pending.length / learnWeeks));
-    const weeks = [];
-    for (let w = 0; w * perWeek < pending.length; w++) {
-      const start = new Date(now.getTime() + w * WEEK);
-      weeks.push({ n: w + 1, start, end: new Date(Math.min(start.getTime() + WEEK - 864e5, exam.getTime())), topics: pending.slice(w * perWeek, (w + 1) * perWeek) });
-    }
-    const revStart = new Date(Math.max(now.getTime() + weeks.length * WEEK, exam.getTime() - revisionWeeks * WEEK));
-    return { daysLeft, weeksLeft, revisionWeeks, pending, perWeek, weeks, exam, revStart, behind: weeksLeft > 0 && pending.length / learnWeeks > 10 };
-  }
-
-  function planSection(b, p) {
-    const plan = buildPlan(b, p);
-    const fmt = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-    const topicRow = (t) => `<label class="topic"><input type="checkbox" data-topic="${t.sid}:${t.idx}"/><span class="grow">${esc(t.name)} <span class="muted small">· ${esc(t.sname)}</span></span>${t.weak ? '<span class="chip chip-danger">weak</span>' : ""}</label>`;
-    const head = `<div class="card-title">${icon("cal")} Your study plan</div>`;
-
-    if (plan.daysLeft === 0) {
-      return `<div class="card" id="plan">${head}<p class="muted">Your exam date (${esc(p.examDate || DEFAULT_EXAM)}) has passed or is today. Set your next exam date to get a fresh week-by-week plan.</p>
-        <a class="btn btn-primary btn-sm" href="#/profile">${icon("cal")} Update exam date</a></div>`;
-    }
-    if (!plan.pending.length) {
-      return `<div class="card" id="plan">${head}<p><b>Syllabus complete. 🎉</b> <span class="muted">With ${plan.daysLeft} days to go, spend your time on revision and timed practice.</span></p>
-        <div class="row"><a class="btn btn-primary btn-sm" href="#/quiz?mode=smart">${icon("spark")} Smart revision quiz</a><a class="btn btn-ghost btn-sm" href="#/history?tab=saved">${icon("bookmark")} Revise saved questions</a></div></div>`;
-    }
-
-    const [cur, ...rest] = plan.weeks;
-    return `
-    <div class="card" id="plan">
-      <div class="spread">${head}<span class="chip chip-primary">${plan.daysLeft} days to exam · ${fmt(plan.exam)}</span></div>
-      <p class="muted small" style="margin-top:-6px">${plan.pending.length} topics left, about <b>${plan.perWeek}</b> a week${plan.revisionWeeks ? `, then ${plan.revisionWeeks} week${plan.revisionWeeks > 1 ? "s" : ""} of revision and mock tests` : ""}. High-weightage subjects and your weak areas come first. The plan updates as you tick topics off.</p>
-      ${plan.behind ? `<div class="explain small" style="margin:0 0 14px">That's a heavy pace. Start with the highest-weightage topics and practise them with quizzes rather than aiming to cover everything in depth.</div>` : ""}
-      <div class="spread" style="margin:6px 0 10px"><b>This week</b><span class="small muted">${fmt(cur.start)} – ${fmt(cur.end)}</span></div>
-      <div class="topics" style="padding:0;display:grid;gap:6px">${cur.topics.map(topicRow).join("")}</div>
-      <div class="row" style="margin-top:14px">
-        <a class="btn btn-primary btn-sm" href="#/quiz?subject=${cur.topics[0].sid}">${icon("target")} Practise ${esc(cur.topics[0].sname)}</a>
-        <a class="btn btn-ghost btn-sm" href="#/reminders">${icon("bell")} Set a study reminder</a>
-      </div>
-      ${rest.length || plan.revisionWeeks ? `
-      <details class="plan-ahead" style="margin-top:16px">
-        <summary class="small"><b>Coming up</b> · ${rest.length} more week${rest.length === 1 ? "" : "s"}${plan.revisionWeeks ? " + revision" : ""}</summary>
-        <ul class="list">
-          ${rest.map((w) => `<li><span class="chip">Wk ${w.n}</span><div class="grow"><div class="small muted">${fmt(w.start)} – ${fmt(w.end)}</div>
-            <div class="small">${[...new Set(w.topics.map((t) => t.sname))].map((n) => `<b>${esc(n)}</b>: ${w.topics.filter((t) => t.sname === n).map((t) => esc(t.name)).join(", ")}`).join(" · ")}</div></div></li>`).join("")}
-          ${plan.revisionWeeks ? `<li><span class="chip chip-success">Revise</span><div class="grow"><div class="small muted">${fmt(plan.revStart)} – ${fmt(plan.exam)}</div>
-            <div class="small">Full-syllabus revision, timed mixed quizzes and your saved questions.</div></div></li>` : ""}
-        </ul>
-      </details>` : ""}
-    </div>`;
-  }
-
-  // Study
-  views.study = () => {
-    const p = Store.get().profile;
-    const b = branchById(p.branch);
-    const syl = Store.syllabusProgress(b);
-    return `
-    <div class="page-head spread">
-      <div><h1>Study plan &amp; syllabus</h1><p class="muted">${esc(b.name)} (${b.id}). Tick off topics as you finish them. Marks shown are approximate past-year averages.</p></div>
-      <div class="ring" style="--p:${syl.pct};width:96px;height:96px"><div style="width:74px;height:74px"><div><b style="font-size:1.1rem">${syl.pct}%</b><span>done</span></div></div></div>
-    </div>
-    ${planSection(b, p)}
-    <h2 id="syllabus" style="margin:28px 0 14px">Full syllabus</h2>
-    <div class="stack">
-      ${b.subjects.map((s) => { const pp = syl.per[s.id]; return `
-      <details class="card subject" ${pp.done && pp.done < pp.all ? "open" : ""}>
-        <summary>
-          <div class="grow">
-            <div class="spread"><b>${esc(s.name)}</b><span class="chip">${s.marks ? "~" + s.marks + " marks" : ""}</span></div>
-            <div class="row" style="margin-top:8px;gap:10px"><div class="bar ${pp.pct === 100 ? "good" : ""}" style="flex:1"><i style="width:${pp.pct}%"></i></div><span class="small muted">${pp.done}/${pp.all}</span></div>
-          </div>
-          ${icon("chev", "icon chev")}
-        </summary>
-        <div class="topics">
-          ${s.topics.map((t, i) => { const done = Store.isStudied(b.id, s.id, i); return `
-          <label class="topic ${done ? "done" : ""}"><input type="checkbox" data-topic="${s.id}:${i}" ${done ? "checked" : ""}/><span>${esc(t)}</span></label>`; }).join("")}
-        </div>
-        <div class="subject-actions">
-          <a class="btn btn-primary btn-sm" href="#/quiz?subject=${s.id}">${icon("target")} Practise</a>
-          <a class="btn btn-ghost btn-sm" href="#/quiz?subject=${s.id}&mode=ai">${icon("spark")} AI quiz</a>
-        </div>
-      </details>`; }).join("")}
-    </div>`;
-  };
-  views.study.mount = () => {
-    const b = Store.get().profile.branch;
-    $$("[data-topic]").forEach((cb) => cb.addEventListener("change", () => {
-      const [sid, idx] = cb.dataset.topic.split(":");
-      const subj = branchById(b).subjects.find((x) => x.id === sid);
-      Store.toggleTopic(b, sid, Number(idx), subj ? `${subj.topics[Number(idx)]} (${subj.name})` : "");
-      const scroll = window.scrollY;
-      const openIds = $$("details.subject").map((d) => d.open);
-      render();
-      $$("details.subject").forEach((d, i) => { d.open = openIds[i]; });
-      window.scrollTo(0, scroll);
-    }));
-  };
-
-  // ---------- Quiz ----------
-  const quiz = { phase: "setup", questions: [], idx: 0, answers: [], instant: true, seconds: 0, timer: null, cfg: null };
-
-  function pickFromBank(branchId, subject, count, difficulty) {
-    let pool = BANK.filter((x) => x.branch === branchId || (x.branch === "*" && !(branchId === "DA" && x.subject === "em")));
-    if (subject && subject !== "mixed") pool = pool.filter((x) => x.subject === subject);
-    if (difficulty) { const f = pool.filter((x) => x.d === Number(difficulty)); if (f.length >= Math.min(count, 3)) pool = f; }
-    // Prefer unseen questions and weak subjects
-    const seen = new Set();
-    Store.get().attempts.forEach((a) => a.items.forEach((it) => it.qid && seen.add(it.qid)));
-    const bySub = Store.totals(branchId).bySubject;
-    const weight = (x) => {
-      const s = bySub[x.subject];
-      const weakness = s && s.total ? 1 - s.correct / s.total : 0.5;
-      return (seen.has(x.id) ? 1 : 3) * (1 + weakness * 2) * Math.random();
-    };
-    return pool.map((x) => [x, weight(x)]).sort((a, c) => c[1] - a[1]).slice(0, count).map(([x]) => x);
-  }
-
-  function stopTimer() { if (quiz.timer) { clearInterval(quiz.timer); quiz.timer = null; } }
-
-  views.quiz = (params) => {
-    if (quiz.phase === "play") return quizPlay();
-    if (quiz.phase === "result") return quizResult();
-    if (quiz.phase === "loading") return `<div class="quiz-wrap card" style="text-align:center;padding:48px 20px"><div class="spinner"></div><h3>Generating your AI quiz…</h3><p class="muted">Writing fresh GATE-style questions. This usually takes a few seconds.</p></div>`;
-
-    const st = Store.get(), b = branchById(st.profile.branch);
-    const mode = params.get("mode") === "ai" ? "ai" : "bank";
-    const subj = params.get("subject") || (params.get("mode") === "smart" ? "mixed" : "mixed");
-    const hasKey = !!st.settings.apiKey;
-    return `
-    <div class="quiz-wrap">
-      <div class="page-head"><h1>Quiz</h1><p class="muted">Practise from the question bank or have AI write new questions on any topic.</p></div>
-      <form id="quiz-form" class="card stack">
-        <div>
-          <span class="small" style="font-weight:600;display:block;margin-bottom:6px">Question source</span>
-          <div class="seg" id="mode-seg">
-            <button type="button" data-mode="bank" class="${mode === "bank" ? "on" : ""}">${"Smart practice (question bank)"}</button>
-            <button type="button" data-mode="ai" class="${mode === "ai" ? "on" : ""}">✨ AI generated</button>
-          </div>
-        </div>
-        <div class="form-grid">
-          <label class="field"><span>Subject</span><select name="subject">
-            <option value="mixed">Smart mix (focus on weak areas)</option>
-            ${b.subjects.map((s) => `<option value="${s.id}" ${subj === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
-          </select></label>
-          <label class="field"><span>Number of questions</span><select name="count">${[5, 10, 15, 20].map((n) => `<option ${n === 10 ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-          <label class="field"><span>Difficulty</span><select name="difficulty"><option value="">Any</option><option value="1">Easy</option><option value="2" ${mode === "ai" ? "selected" : ""}>Medium</option><option value="3">Hard</option></select></label>
-          <label class="field ai-only" ${mode === "ai" ? "" : "hidden"}><span>Topic (optional)</span><input name="topic" maxlength="80" placeholder="e.g. Dynamic programming, Bode plot"/></label>
-        </div>
-        <label class="row small"><input type="checkbox" name="instant" ${quiz.instant ? "checked" : ""}/> Show the answer and explanation after each question</label>
-        <div class="ai-only" ${mode === "ai" ? "" : "hidden"}>
-          ${hasKey ? `<p class="small muted" style="margin:0">${icon("spark", "icon")} Questions are generated by Claude using your API key.</p>`
-            : `<div class="explain small">AI quizzes need a Claude API key. <a href="#/settings">Add one in Settings</a>; it's saved only in this browser. Smart practice works without one.</div>`}
-        </div>
-        <input type="hidden" name="mode" value="${mode}"/>
-        <button class="btn btn-primary btn-lg btn-block" type="submit">Start quiz ${icon("arrow")}</button>
-      </form>
-    </div>`;
-  };
-  views.quiz.mount = () => {
-    if (quiz.phase === "play") return mountPlay();
-    if (quiz.phase === "result") return mountResult();
-    const form = $("#quiz-form");
-    if (!form) return;
-    $$("#mode-seg button").forEach((btn) => btn.addEventListener("click", () => {
-      $$("#mode-seg button").forEach((x) => x.classList.toggle("on", x === btn));
-      form.mode.value = btn.dataset.mode;
-      $$(".ai-only", form).forEach((el) => { el.hidden = btn.dataset.mode !== "ai"; });
-    }));
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const st = Store.get(), b = branchById(st.profile.branch);
-      const cfg = {
-        mode: form.mode.value, subject: form.subject.value, count: Number(form.count.value),
-        difficulty: form.difficulty.value, topic: form.topic.value.trim(), branch: b.id,
-      };
-      quiz.instant = form.instant.checked;
-      let questions;
-      if (cfg.mode === "ai") {
-        if (!st.settings.apiKey) { toast("Add your Claude API key in Settings first.", "key"); location.hash = "#/settings"; return; }
-        quiz.phase = "loading"; render();
-        try {
-          const subjName = cfg.subject === "mixed" ? "Mixed: all subjects in the syllabus" : subjectName(b, cfg.subject);
-          questions = await AI.generateQuiz({
-            apiKey: st.settings.apiKey, model: st.settings.aiModel, branchName: b.name, subjectName: subjName,
-            topic: cfg.topic, count: cfg.count, difficulty: Number(cfg.difficulty) || 2,
-          });
-          questions = questions.map((x) => ({ ...x, subject: cfg.subject }));
-        } catch (err) {
-          quiz.phase = "setup"; render(); toast(err.message || "Could not generate the quiz.", "spark"); return;
-        }
-      } else {
-        questions = pickFromBank(b.id, cfg.subject, cfg.count, cfg.difficulty);
-        if (!questions.length) { toast("No bank questions for that subject yet. Try the AI quiz.", "spark"); return; }
-        if (questions.length < cfg.count) toast(`Only ${questions.length} bank questions available here. Try AI for more.`, "bulb");
-      }
-      startQuiz(questions, cfg);
-    });
-  };
-  function startQuiz(questions, cfg) {
-    Object.assign(quiz, { phase: "play", questions, idx: 0, answers: new Array(questions.length).fill(null), seconds: 0, cfg });
-    stopTimer();
-    quiz.timer = setInterval(() => { quiz.seconds++; const t = $("#qtimer"); if (t) t.textContent = fmtTime(quiz.seconds); }, 1000);
-    if (location.hash.split("?")[0] !== "#/quiz") location.hash = "#/quiz"; else render();
-  }
-  const bookmarkBtn = (qq, i) => { const on = Store.isSaved(qq); return `<button type="button" class="btn btn-ghost btn-sm bm ${on ? "on" : ""}" data-bm="${i}" title="${on ? "Remove from saved" : "Save for revision"}">${icon("bookmark")}<span>${on ? "Saved" : "Save"}</span></button>`; };
-
-  function quizPlay() {
-    const q = quiz.questions[quiz.idx], chosen = quiz.answers[quiz.idx];
-    const reveal = quiz.instant && chosen !== null;
-    const b = branchById(quiz.cfg.branch);
-    const last = quiz.idx === quiz.questions.length - 1;
-    return `
-    <div class="quiz-wrap">
-      <div class="qhead">
-        <div class="row"><span class="chip chip-primary">${esc(q.subject && q.subject !== "mixed" ? subjectName(b, q.subject) : (quiz.cfg.subject === "mixed" ? "Smart mix" : subjectName(b, quiz.cfg.subject)))}</span>${q.ai ? '<span class="chip">✨ AI</span>' : ""}</div>
-        <span class="timer">${icon("clock")}<span id="qtimer">${fmtTime(quiz.seconds)}</span></span>
-      </div>
-      <div class="qdots">${quiz.questions.map((qq, i) => {
-        const a = quiz.answers[i];
-        const cls = i === quiz.idx ? "cur" : a === null ? "" : quiz.instant ? (a === qq.a ? "ok" : "no") : "cur";
-        return `<i class="${cls}" title="Q${i + 1}"></i>`; }).join("")}</div>
-      <div class="card">
-        <div class="spread" style="margin-bottom:6px"><span class="muted small">Question ${quiz.idx + 1} of ${quiz.questions.length}</span>${bookmarkBtn(q, quiz.idx)}</div>
-        <div class="qtext">${esc(q.q)}</div>
-        <div class="options">
-          ${q.o.map((opt, i) => {
-            let cls = "";
-            if (reveal) cls = i === q.a ? "correct" : i === chosen ? "wrong" : "";
-            else if (i === chosen) cls = "selected";
-            return `<button class="opt ${cls}" data-opt="${i}" ${reveal ? "disabled" : ""}><span class="key">${LETTERS[i]}</span><span>${esc(opt)}</span></button>`; }).join("")}
-        </div>
-        ${reveal ? `<div class="explain"><b>${chosen === q.a ? "✅ Correct!" : `❌ Correct answer: ${LETTERS[q.a]}`}</b><div class="small" style="margin-top:4px">${esc(q.ex)}</div></div>` : ""}
-        <div class="spread" style="margin-top:18px">
-          <button class="btn btn-ghost" id="q-prev" ${quiz.idx === 0 ? "disabled" : ""}>Previous</button>
-          <div class="row">
-            <button class="btn btn-ghost btn-sm" id="q-quit">Quit</button>
-            ${last ? `<button class="btn btn-primary" id="q-submit">Submit quiz</button>` : `<button class="btn btn-primary" id="q-next">${chosen === null ? "Skip" : "Next"} ${icon("arrow")}</button>`}
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }
-  function mountPlay() {
-    $$("[data-opt]").forEach((btn) => btn.addEventListener("click", () => { quiz.answers[quiz.idx] = Number(btn.dataset.opt); render(); }));
-    bindBookmarks(quiz.questions);
-    const go = (d) => { quiz.idx = Math.min(quiz.questions.length - 1, Math.max(0, quiz.idx + d)); render(); window.scrollTo(0, 0); };
-    $("#q-prev")?.addEventListener("click", () => go(-1));
-    $("#q-next")?.addEventListener("click", () => go(1));
-    $("#q-quit")?.addEventListener("click", () => { if (confirm("Quit this quiz? Your answers won't be saved.")) { stopTimer(); quiz.phase = "setup"; render(); } });
-    $("#q-submit")?.addEventListener("click", () => {
-      const un = quiz.answers.filter((a) => a === null).length;
-      if (un && !confirm(`You have ${un} unanswered question(s). Submit anyway?`)) return;
-      finishQuiz();
-    });
-  }
-  function finishQuiz() {
-    stopTimer();
-    const items = quiz.questions.map((q, i) => ({ qid: q.ai ? null : q.id, q: q.q, o: q.o, a: q.a, chosen: quiz.answers[i], ex: q.ex, subject: q.subject }));
-    const answered = items.filter((x) => x.chosen !== null);
-    const correct = answered.filter((x) => x.chosen === x.a).length;
-    if (answered.length) {
-      const b = branchById(quiz.cfg.branch);
-      const label = quiz.cfg.mode === "saved" ? "Saved questions" : quiz.cfg.subject === "mixed" ? "Smart mix" : subjectName(b, quiz.cfg.subject);
-      Store.addAttempt({ branch: quiz.cfg.branch, subject: quiz.cfg.subject, mode: quiz.cfg.mode, total: answered.length, correct, seconds: quiz.seconds, items: answered }, label);
-    }
-    quiz.result = { items, correct, answered: answered.length };
-    quiz.phase = "result";
-    render(); window.scrollTo(0, 0);
-  }
-  function quizResult() {
-    const r = quiz.result, total = quiz.questions.length;
-    const pct = total ? Math.round((r.correct / total) * 100) : 0;
-    const msg = pct >= 80 ? "Outstanding! 🏆" : pct >= 60 ? "Good job! 💪" : pct >= 40 ? "Keep practising 📚" : "Every expert was once a beginner 🌱";
-    return `
-    <div class="quiz-wrap stack">
-      <div class="card score-hero">
-        <div class="ring" style="--p:${pct}"><div><div><b>${pct}%</b><span>${r.correct}/${total} correct</span></div></div></div>
-        <h2>${msg}</h2>
-        <p class="muted">Time: ${fmtTime(quiz.seconds)} · Answered ${r.answered} of ${total}</p>
-        <div class="row" style="justify-content:center">
-          <button class="btn btn-primary" id="r-again">${icon("refresh")} New quiz</button>
-          <a class="btn btn-ghost" href="#/progress">${icon("chart")} View progress</a>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">${icon("book")} Review answers</div>
-        ${r.items.map((it, i) => `
-          <div class="review-item">
-            <div class="spread"><b class="small">Q${i + 1}</b><span class="row" style="gap:8px">${bookmarkBtn(quiz.questions[i], i)}${it.chosen === null ? '<span class="chip">Skipped</span>' : it.chosen === it.a ? '<span class="chip chip-success">Correct</span>' : '<span class="chip chip-danger">Wrong</span>'}</span></div>
-            <p style="margin:6px 0 8px;font-weight:600;white-space:pre-wrap">${esc(it.q)}</p>
-            <div class="small">${it.chosen !== null && it.chosen !== it.a ? `<div style="color:var(--danger)">Your answer: ${LETTERS[it.chosen]}. ${esc(it.o[it.chosen])}</div>` : ""}
-            <div style="color:var(--success)">Correct: ${LETTERS[it.a]}. ${esc(it.o[it.a])}</div>
-            <div class="muted" style="margin-top:4px">${esc(it.ex)}</div></div>
-          </div>`).join("")}
-      </div>
-    </div>`;
-  }
-  function mountResult() {
-    $("#r-again")?.addEventListener("click", () => { quiz.phase = "setup"; render(); });
-    bindBookmarks(quiz.questions);
-  }
-  function bindBookmarks(list) {
-    $$("[data-bm]").forEach((btn) => btn.addEventListener("click", () => {
-      const qq = list[Number(btn.dataset.bm)];
-      const on = Store.toggleSaved(qq, quiz.cfg ? quiz.cfg.branch : Store.get().profile.branch);
-      btn.classList.toggle("on", on);
-      btn.title = on ? "Remove from saved" : "Save for revision";
-      btn.querySelector("span").textContent = on ? "Saved" : "Save";
-      toast(on ? "Saved to History → Saved questions" : "Removed from saved", "bookmark");
-    }));
-  }
-
-  // Progress
-  views.progress = () => {
-    const st = Store.get(), b = branchById(st.profile.branch);
-    const tot = Store.totals(b.id), syl = Store.syllabusProgress(b);
-    const days = [];
-    for (let i = 13; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push({ d, n: st.activity[Store.todayKey(d)] || 0 }); }
-    const max = Math.max(5, ...days.map((x) => x.n));
-    const studyMins = Math.round(st.attempts.filter((a) => a.branch === b.id).reduce((s, a) => s + (a.seconds || 0), 0) / 60);
-    return `
-    <div class="page-head spread"><div><h1>Your progress</h1><p class="muted">${esc(b.name)}: accuracy, consistency and syllabus coverage.<span class="print-only"> Report for ${esc(st.profile.name || "Aspirant")} · ${new Date().toLocaleDateString()}</span></p></div>
-      <div class="row no-print"><a class="btn btn-ghost" href="#/history">${icon("history")} Full history</a><button class="btn btn-primary" id="print-report">${icon("print")} Download report</button></div></div>
-    <div class="grid">
-      <div class="grid grid-4">
-        ${statCard("flame", Store.streak() + " days", "Current streak")}
-        ${statCard("check", tot.accuracy + "%", "Accuracy")}
-        ${statCard("spark", tot.total, "Questions solved")}
-        ${statCard("clock", studyMins + " min", "Quiz time")}
-      </div>
-      <div class="grid grid-2">
-        <div class="card">
-          <div class="card-title">${icon("chart")} Last 14 days</div>
-          <div class="activity">${days.map((x) => `<div class="col" title="${x.n} questions on ${x.d.toDateString()}"><i class="${x.n ? "" : "zero"}" style="height:${Math.max(3, (x.n / max) * 100)}%"></i><span>${x.d.getDate()}</span></div>`).join("")}</div>
-        </div>
-        <div class="card">
-          <div class="card-title">${icon("book")} Syllabus coverage</div>
-          <div class="row" style="gap:20px">
-            <div class="ring" style="--p:${syl.pct}"><div><div><b>${syl.pct}%</b><span>${syl.done}/${syl.all} topics</span></div></div></div>
-            <p class="muted small" style="flex:1;min-width:160px;margin:0">${syl.pct < 30 ? "You're just getting started. Mark topics complete on the Study page as you finish them." : syl.pct < 80 ? "Good progress. Keep revising completed topics with quizzes." : "Nearly there! Switch your focus to mock tests and revision."}</p>
-          </div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">${icon("target")} Accuracy by subject</div>
-        ${b.subjects.map((s) => { const v = tot.bySubject[s.id]; const acc = v ? Math.round((v.correct / v.total) * 100) : null; return `
-          <div style="margin-bottom:14px"><div class="spread small"><span>${esc(s.name)}</span><span class="muted">${acc === null ? "Not attempted" : `${acc}% · ${v.correct}/${v.total}`}</span></div>
-          <div class="bar ${acc === null ? "" : acc >= 70 ? "good" : acc < 40 ? "bad" : ""}" style="margin-top:6px"><i style="width:${acc || 0}%"></i></div></div>`; }).join("")}
-      </div>
-      <div class="card">
-        <div class="card-title">${icon("clock")} Quiz history</div>
-        ${st.attempts.length ? `<ul class="list">${st.attempts.slice(0, 15).map(attemptRow).join("")}</ul>` : `<div class="empty">No quizzes yet. <a href="#/quiz">Start one →</a></div>`}
-      </div>
-    </div>`;
-  };
-
-  views.progress.mount = () => { $("#print-report")?.addEventListener("click", () => window.print()); };
-
-  // Reminders
-  function nextOccurrence(r) {
-    const [h, m] = r.time.split(":").map(Number);
-    const now = new Date();
-    for (let i = 0; i < 8; i++) {
-      const d = new Date(now); d.setDate(now.getDate() + i); d.setHours(h, m, 0, 0);
-      if (r.days.includes(d.getDay()) && d > now) return d;
-    }
-    return null;
-  }
-  function upcomingReminders(n) {
-    return Store.get().reminders.filter((r) => r.enabled).map((r) => ({ r, d: nextOccurrence(r) })).filter((x) => x.d)
-      .sort((a, c) => a.d - c.d).slice(0, n)
-      .map(({ r, d }) => ({ title: r.title, when: d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" }) }));
-  }
-  function icsFor(r) {
-    const [h, m] = r.time.split(":").map(Number);
-    const start = nextOccurrence(r) || new Date();
-    start.setHours(h, m, 0, 0);
-    const z = (x) => String(x).padStart(2, "0");
-    const local = `${start.getFullYear()}${z(start.getMonth() + 1)}${z(start.getDate())}T${z(h)}${z(m)}00`;
-    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
-    const byday = r.days.map((d) => ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][d]).join(",");
-    const text = r.title.replace(/[,;\\]/g, " ");
-    return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//YourGATEBuddy//Reminders//EN", "BEGIN:VEVENT",
-      `UID:${r.id}@yourgatebuddy.com`, `DTSTAMP:${stamp}`, `DTSTART:${local}`, "DURATION:PT30M",
-      `RRULE:FREQ=WEEKLY;BYDAY=${byday}`, `SUMMARY:${text}`, "DESCRIPTION:Study session · yourgatebuddy.com",
-      "BEGIN:VALARM", "TRIGGER:-PT0M", "ACTION:DISPLAY", `DESCRIPTION:${text}`, "END:VALARM",
-      "END:VEVENT", "END:VCALENDAR"].join("\r\n");
-  }
-
-  views.reminders = () => {
-    const rs = Store.get().reminders;
-    const perm = "Notification" in window ? Notification.permission : "unsupported";
-    return `
-    <div class="page-head"><h1>Reminders</h1><p class="muted">Set study reminders to keep your streak going. They show as notifications while YourGATEBuddy is open; add them to your calendar to be reminded even when it's closed.</p></div>
-    <div class="grid grid-2" style="align-items:start">
-      <form class="card stack" id="rem-form">
-        <div class="card-title" style="margin:0">${icon("plus")} New reminder</div>
-        <label class="field"><span>Title</span><input name="title" required maxlength="60" placeholder="e.g. Revise Algorithms" value="Daily GATE study session"/></label>
-        <label class="field"><span>Time</span><input type="time" name="time" required value="19:00"/></label>
-        <div><span class="small" style="font-weight:600;display:block;margin-bottom:6px">Repeat on</span>
-          <div class="seg" id="days">${DAY.map((d, i) => `<button type="button" data-day="${i}" class="on">${d}</button>`).join("")}</div></div>
-        <button class="btn btn-primary btn-block" type="submit">${icon("bell")} Add reminder</button>
-        ${perm === "default" ? `<button type="button" class="btn btn-ghost btn-block" id="perm">Allow browser notifications</button>` : ""}
-        ${perm === "denied" ? `<p class="small muted" style="margin:0">Notifications are blocked in your browser settings, so reminders will show as in-app alerts.</p>` : ""}
-        ${perm === "unsupported" ? `<p class="small muted" style="margin:0">This browser doesn't support notifications. Use “Add to calendar” instead.</p>` : ""}
-      </form>
-      <div class="card">
-        <div class="card-title">${icon("bell")} Your reminders</div>
-        ${rs.length ? `<ul class="list">${rs.map((r) => `
-          <li>
-            <input type="checkbox" data-toggle="${r.id}" ${r.enabled ? "checked" : ""} title="Enabled"/>
-            <div class="grow"><b class="small">${esc(r.title)}</b><div class="muted small">${esc(r.time)} · ${r.days.length === 7 ? "Every day" : r.days.map((d) => DAY[d]).join(", ")}</div></div>
-            <button class="btn btn-ghost btn-sm" data-ics="${r.id}" title="Add to calendar">${icon("cal")}</button>
-            <button class="btn btn-danger btn-sm" data-del="${r.id}" title="Delete">${icon("trash")}</button>
-          </li>`).join("")}</ul>` : `<div class="empty">No reminders yet. Add your first one.</div>`}
-      </div>
-    </div>`;
-  };
-  views.reminders.mount = () => {
-    const form = $("#rem-form");
-    $$("#days button").forEach((btn) => btn.addEventListener("click", () => btn.classList.toggle("on")));
-    $("#perm")?.addEventListener("click", async () => { await Notification.requestPermission(); render(); });
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const days = $$("#days button.on").map((b) => Number(b.dataset.day));
-      if (!days.length) { toast("Pick at least one day.", "cal"); return; }
-      Store.addReminder({ title: form.title.value.trim(), time: form.time.value, days });
-      if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
-      toast("Reminder added");
-      render();
-    });
-    $$("[data-toggle]").forEach((cb) => cb.addEventListener("change", () => Store.updateReminder(cb.dataset.toggle, { enabled: cb.checked })));
-    $$("[data-del]").forEach((btn) => btn.addEventListener("click", () => { Store.removeReminder(btn.dataset.del); render(); }));
-    $$("[data-ics]").forEach((btn) => btn.addEventListener("click", () => {
-      const r = Store.get().reminders.find((x) => x.id === btn.dataset.ics);
-      if (r) { download("yourgatebuddy-reminder.ics", icsFor(r), "text/calendar"); toast("Calendar file downloaded. Open it to add the reminder.", "cal"); }
-    }));
-  };
-
-  function checkReminders() {
-    const now = new Date();
-    const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const stamp = Store.todayKey(now) + " " + hhmm;
-    Store.get().reminders.forEach((r) => {
-      if (!r.enabled || r.time !== hhmm || !r.days.includes(now.getDay()) || r.lastFired === stamp) return;
-      Store.updateReminder(r.id, { lastFired: stamp }, true);
-      if ("Notification" in window && Notification.permission === "granted") {
-        try { new Notification("YourGATEBuddy", { body: r.title, icon: "assets/img/logo.svg", tag: r.id }); } catch (_) { /* some mobile browsers need a service worker */ }
-      }
-      toast("⏰ " + r.title, "bell");
-    });
-  }
-
-  // Settings
-  views.settings = () => {
-    const s = Store.get().settings;
-    return `
-    <div class="page-head"><h1>Settings</h1><p class="muted">Appearance, AI quiz setup and your data.</p></div>
-    <div class="grid grid-2" style="align-items:start">
-      <div class="card stack">
-        <div class="card-title" style="margin:0">${icon("gear")} Appearance</div>
-        <div class="seg" id="theme-seg">${["system", "light", "dark"].map((t) => `<button type="button" data-theme="${t}" class="${s.theme === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div>
-      </div>
-      <form class="card stack" id="ai-form">
-        <div class="card-title" style="margin:0">${icon("key")} AI quiz (Claude)</div>
-        <p class="small muted" style="margin:0">AI quizzes are generated with Claude using your own Anthropic API key. The key is stored only in this browser and sent only to api.anthropic.com. Get a key at console.anthropic.com.</p>
-        <label class="field"><span>Claude API key</span><input type="password" name="apiKey" autocomplete="off" placeholder="sk-ant-…" value="${esc(s.apiKey)}"/></label>
-        <label class="field"><span>Model</span><select name="aiModel">
-          ${[["claude-opus-5-5", "Claude Opus 5.5 (recommended)"], ["claude-sonnet-5-5", "Claude Sonnet 5.5 (faster)"], ["claude-haiku-5-5", "Claude Haiku 5.5 (fastest, lowest cost)"]]
-            .map(([v, l]) => `<option value="${v}" ${s.aiModel === v ? "selected" : ""}>${l}</option>`).join("")}
-        </select></label>
-        <div class="row"><button class="btn btn-primary" type="submit">Save</button>${s.apiKey ? `<button class="btn btn-ghost" type="button" id="clear-key">Remove key</button>` : ""}</div>
-      </form>
-      <div class="card stack">
-        <div class="card-title" style="margin:0">${icon("shield")} Your data</div>
-        <p class="small muted" style="margin:0">${signedIn() ? `Your progress is synced to <b>${esc(cloud().user.email)}</b>. You can also export a backup file.` : "Your progress is stored on this device. Sign in to sync it, or export a backup file."}</p>
-        <div class="row">
-          <button class="btn btn-ghost" id="export">${icon("download")} Export</button>
-          <label class="btn btn-ghost">${icon("upload")} Import<input type="file" id="import" accept="application/json" hidden/></label>
-          <button class="btn btn-danger" id="reset">${icon("trash")} Reset all</button>
-        </div>
-      </div>
-    </div>`;
-  };
-  views.settings.mount = () => {
-    $$("#theme-seg button").forEach((btn) => btn.addEventListener("click", () => { Store.setSettings({ theme: btn.dataset.theme }); applyTheme(); render(); }));
-    $("#ai-form").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target;
-      Store.setSettings({ apiKey: f.apiKey.value.trim(), aiModel: f.aiModel.value });
-      toast("Settings saved"); render();
-    });
-    $("#clear-key")?.addEventListener("click", () => { Store.setSettings({ apiKey: "" }); toast("API key removed"); render(); });
-    $("#export").addEventListener("click", () => {
-      const data = JSON.parse(Store.exportJSON()); data.settings.apiKey = ""; // never export the key
-      download(`yourgatebuddy-backup-${Store.todayKey()}.json`, JSON.stringify(data, null, 2), "application/json");
-    });
-    $("#import").addEventListener("change", async (e) => {
-      const file = e.target.files[0]; if (!file) return;
-      try { const key = Store.get().settings.apiKey; Store.importJSON(await file.text()); if (!Store.get().settings.apiKey) Store.setSettings({ apiKey: key }); toast("Backup imported"); applyTheme(); render(); }
-      catch (_) { toast("That file isn't a valid backup.", "shield"); }
-    });
-    $("#reset").addEventListener("click", async () => {
-      if (signedIn()) {
-        if (!confirm("This permanently deletes ALL your progress, history and reminders from your account and this device. Continue?")) return;
-        try { await cloud().wipe(); toast("All data deleted", "trash"); location.hash = "#/onboard"; } catch (e) { toast("Couldn't delete cloud data. Check your connection.", "trash"); }
-        return;
-      }
-      if (confirm("This deletes all your progress, reminders and settings on this device. Continue?")) { Store.reset(); applyTheme(); location.hash = "#/home"; }
-    });
-  };
-
-  // Profile
-  views.profile = () => {
-    const p = Store.get().profile, b = branchById(p.branch);
-    const tot = Store.totals(), year = new Date().getFullYear();
-    return `
-    <div class="page-head"><h1>Profile</h1></div>
-    <div class="grid grid-2" style="align-items:start">
-      ${accountCard()}
-      <div class="card">
-        <div class="row" style="gap:16px">
-          ${avatar(64)}
-          <div><h2 style="margin:0">${esc(p.name || "Aspirant")}</h2><div class="muted small">GATE ${esc(p.targetYear)} · ${esc(b.name)}</div></div>
-        </div>
-        <div class="grid grid-3" style="margin-top:20px;text-align:center">
-          <div><b style="font-size:1.3rem">${tot.total}</b><div class="muted small">Questions</div></div>
-          <div><b style="font-size:1.3rem">${tot.accuracy}%</b><div class="muted small">Accuracy</div></div>
-          <div><b style="font-size:1.3rem">${Store.streak()}</b><div class="muted small">Day streak</div></div>
-        </div>
-      </div>
-      <form class="card stack" id="profile-form">
-        <div class="form-grid">
-          <label class="field"><span>Name</span><input name="name" maxlength="40" value="${esc(p.name || "")}"/></label>
-          <label class="field"><span>GATE paper</span><select name="branch">${BRANCHES.map((x) => `<option value="${x.id}" ${x.id === p.branch ? "selected" : ""}>${x.id} · ${x.short}</option>`).join("")}</select></label>
-          <label class="field"><span>Target year</span><select name="targetYear">${[year, year + 1, year + 2].map((y) => `<option ${String(p.targetYear) === String(y) ? "selected" : ""}>${y}</option>`).join("")}</select></label>
-          <label class="field"><span>Exam date</span><input type="date" name="examDate" value="${esc(p.examDate || DEFAULT_EXAM)}"/></label>
-          <label class="field"><span>Daily goal (questions)</span><input type="number" min="5" max="200" name="dailyGoal" value="${esc(p.dailyGoal || 20)}"/></label>
-        </div>
-        <button class="btn btn-primary" type="submit">Save profile</button>
-      </form>
-    </div>`;
-  };
-  function accountCard() {
-    const c = cloud();
-    if (!c.configured) return "";
-    if (!c.user) return `<div class="card stack"><div class="card-title" style="margin:0">${icon("cloud")} Account</div>
-      <p class="muted small" style="margin:0">You're using YourGATEBuddy as a guest, so your progress is saved only on this device. Sign in to back it up and use it on any device.</p>
-      <a class="btn btn-primary" href="#/signin">${icon("login")} Sign in or create an account</a></div>`;
-    return `<div class="card stack"><div class="card-title" style="margin:0">${icon("cloud")} Account</div>
-      <div class="row">${avatar(40)}<div class="grow" style="min-width:0"><b>${esc(c.user.name || Store.get().profile.name || "Signed in")}</b><div class="muted small" style="overflow-wrap:anywhere">${esc(c.user.email)}</div></div></div>
-      <div class="sync-line small ${c.status === "error" ? "err" : ""}" id="sync-line">${icon("cloud")}<span>${esc(syncLabel())}</span></div>
-      <div class="row"><button class="btn btn-ghost btn-sm" id="sync-now">${icon("refresh")} Sync now</button><button class="btn btn-ghost btn-sm" id="sign-out">${icon("logout")} Sign out</button></div></div>`;
-  }
-  function bindAccount() {
-    $("#sync-now")?.addEventListener("click", async () => { await cloud().syncNow(); toast(cloud().status === "synced" ? "Everything is synced" : syncLabel(), "cloud"); });
-    $("#sign-out")?.addEventListener("click", async () => {
-      if (!confirm("Sign out? Your progress stays saved in your account and is removed from this device.")) return;
-      try { await cloud().signOut(); toast("Signed out", "logout"); location.hash = "#/home"; } catch (e) { toast(e.message, "logout"); }
-    });
-  }
-  views.profile.mount = () => {
-    bindAccount();
-    $("#profile-form").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target;
-      Store.setProfile({ name: f.name.value.trim(), branch: f.branch.value, targetYear: f.targetYear.value, examDate: f.examDate.value, dailyGoal: Math.max(5, parseInt(f.dailyGoal.value, 10) || 20) });
-      quiz.phase = "setup";
-      toast("Profile updated"); render();
-    });
-  };
-
-  // Sign in
-  const authUI = { tab: "signin", busy: false };
-  views.signin = () => {
-    const c = cloud();
-    if (!c.configured) return `<div class="auth-wrap card stack"><h1>Sign in</h1><p class="muted">Accounts aren't set up on this site yet. The site owner needs to add a Firebase config in <code>assets/js/firebase-config.js</code>. See the README for steps.</p><a class="btn btn-primary" href="#/">Continue as guest</a></div>`;
-    if (!c.ready) return `<div class="auth-wrap card" style="text-align:center"><div class="spinner"></div><p class="muted">Loading…</p></div>`;
-    if (c.user) return `<div class="auth-wrap card stack" style="text-align:center"><div style="display:flex;justify-content:center">${avatar(64)}</div><h2>You're signed in</h2><p class="muted">${esc(c.user.email)}</p><a class="btn btn-primary" href="#/dashboard">Go to dashboard ${icon("arrow")}</a></div>`;
-    const up = authUI.tab === "signup", reset = authUI.tab === "reset";
-    return `
-    <div class="auth-wrap">
-      <div class="card stack">
-        <div style="text-align:center">
-          <img src="assets/img/logo.svg" alt="" width="52" height="52" style="margin:0 auto 12px;border-radius:14px"/>
-          <h1 style="font-size:1.6rem;margin-bottom:4px">${reset ? "Reset your password" : up ? "Create your account" : "Welcome back"}</h1>
-          <p class="muted small" style="margin:0">${reset ? "We'll email you a link to set a new password." : "Keep your progress, quiz history and activity on every device."}</p>
-        </div>
-        ${reset ? "" : `<button class="btn btn-ghost btn-block btn-lg" id="google-btn" ${authUI.busy ? "disabled" : ""}>${GOOGLE_SVG} Continue with Google</button>
-        <div class="divider"><span>or use email</span></div>`}
-        <form id="auth-form" class="stack">
-          ${up ? `<label class="field"><span>Your name</span><input name="name" maxlength="40" autocomplete="name" required placeholder="e.g. Aarav Sharma"/></label>` : ""}
-          <label class="field"><span>Email</span><input type="email" name="email" autocomplete="email" required placeholder="you@example.com"/></label>
-          ${reset ? "" : `<label class="field"><span class="spread">Password ${up ? "" : `<a href="#" data-tab="reset" class="small">Forgot password?</a>`}</span><input type="password" name="password" minlength="6" required autocomplete="${up ? "new-password" : "current-password"}" placeholder="${up ? "At least 6 characters" : "Your password"}"/></label>`}
-          <p class="auth-error small" id="auth-error" hidden></p>
-          <button class="btn btn-primary btn-block btn-lg" type="submit" ${authUI.busy ? "disabled" : ""}>${reset ? `${icon("mail")} Send reset link` : up ? "Create account" : `${icon("login")} Sign in`}</button>
-        </form>
-        <p class="small muted" style="text-align:center;margin:0">
-          ${reset ? `<a href="#" data-tab="signin">← Back to sign in</a>` : up ? `Already have an account? <a href="#" data-tab="signin">Sign in</a>` : `New to YourGATEBuddy? <a href="#" data-tab="signup">Create an account</a>`}
-        </p>
-      </div>
-      <p class="small muted" style="text-align:center;margin-top:16px">${Store.get().profile ? `<a href="#/dashboard">Continue without signing in</a>` : `<a href="#/onboard">Continue as guest</a>`} · By continuing you agree to our <a href="terms.html">Terms</a> and <a href="privacy.html">Privacy Policy</a>.</p>
-    </div>`;
-  };
-  views.signin.mount = () => {
-    const c = cloud();
-    if (!c.configured || !c.ready || c.user) return;
-    $$("[data-tab]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); authUI.tab = a.dataset.tab; render(); }));
-    const showErr = (m) => { const el = $("#auth-error"); el.textContent = m; el.hidden = !m; };
-    const run = async (fn) => {
-      authUI.busy = true; $$("#auth-form button, #google-btn").forEach((b) => { b.disabled = true; });
-      try { await fn(); } catch (e) { authUI.busy = false; $$("#auth-form button, #google-btn").forEach((b) => { b.disabled = false; }); showErr(e.message); return; }
-      authUI.busy = false;
-    };
-    $("#google-btn")?.addEventListener("click", () => run(() => c.signInGoogle()));
-    $("#auth-form").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target, email = f.email.value.trim();
-      if (authUI.tab === "reset") return run(async () => { await c.resetPassword(email); toast("Password reset email sent. Check your inbox.", "mail"); authUI.tab = "signin"; render(); });
-      if (authUI.tab === "signup") return run(() => c.signUpEmail(f.name.value.trim(), email, f.password.value));
-      return run(() => c.signInEmail(email, f.password.value));
-    });
-  };
-
-  // History (activity log + saved questions)
-  const histUI = { tab: "activity", filter: "all" };
-  const EVENT_META = { quiz: ["spark", "Quiz"], study: ["book", "Study"], reminder: ["bell", "Reminder"], saved: ["bookmark", "Saved"], account: ["user", "Account"] };
-  views.history = (params) => {
-    if (params && ["activity", "saved"].includes(params.get("tab"))) histUI.tab = params.get("tab");
-    const st = Store.get();
-    const tabs = `<div class="seg" id="hist-tabs"><button data-t="activity" class="${histUI.tab === "activity" ? "on" : ""}">${"Activity"}</button><button data-t="saved" class="${histUI.tab === "saved" ? "on" : ""}">Saved questions (${st.saved.length})</button></div>`;
-    let body;
-    if (histUI.tab === "saved") {
-      body = st.saved.length ? `
-        <div class="spread" style="margin-bottom:14px"><p class="muted small" style="margin:0">Questions you bookmarked during quizzes. Revise them any time.</p>
-          <button class="btn btn-primary btn-sm" id="practise-saved">${icon("target")} Practise ${Math.min(20, st.saved.length)} saved</button></div>
-        <div class="card">${st.saved.map((it, i) => { const b = branchById(it.branch) || BRANCHES[0]; return `
-          <div class="review-item">
-            <div class="spread"><span class="chip chip-primary">${esc(it.subject === "mixed" ? "Mixed" : subjectName(b, it.subject))}</span><button class="btn btn-ghost btn-sm" data-unsave="${i}">${icon("trash")}<span>Remove</span></button></div>
-            <p style="margin:8px 0;font-weight:600;white-space:pre-wrap">${esc(it.q)}</p>
-            <details class="small"><summary style="cursor:pointer;color:var(--primary);font-weight:600">Show answer</summary>
-              <div style="margin-top:6px">${it.o.map((o, j) => `<div style="${j === it.a ? "color:var(--success);font-weight:700" : ""}">${LETTERS[j]}. ${esc(o)}</div>`).join("")}</div>
-              ${it.ex ? `<div class="muted" style="margin-top:6px">${esc(it.ex)}</div>` : ""}</details>
-          </div>`; }).join("")}</div>`
-        : `<div class="card empty">${icon("bookmark")}<p style="margin-top:8px">No saved questions yet. Tap <b>Save</b> on any quiz question to build your own revision set.</p><a class="btn btn-primary btn-sm" href="#/quiz">Take a quiz</a></div>`;
-    } else {
-      const evs = st.events.filter((e) => histUI.filter === "all" || e.type === histUI.filter);
-      const groups = [];
-      evs.forEach((e) => {
-        const k = new Date(e.date).toDateString();
-        if (!groups.length || groups[groups.length - 1].k !== k) groups.push({ k, d: new Date(e.date), items: [] });
-        groups[groups.length - 1].items.push(e);
-      });
-      const today = new Date().toDateString(), yest = new Date(Date.now() - 864e5).toDateString();
-      body = `
-        <div class="seg" id="hist-filter" style="margin-bottom:14px">${[["all", "All"], ["quiz", "Quizzes"], ["study", "Study"], ["saved", "Saved"], ["reminder", "Reminders"], ["account", "Account"]]
-          .map(([k, l]) => `<button data-f="${k}" class="${histUI.filter === k ? "on" : ""}">${l}</button>`).join("")}</div>
-        ${groups.length ? groups.map((g) => `
-          <div class="card" style="margin-bottom:14px">
-            <div class="card-title">${icon("cal")} ${g.k === today ? "Today" : g.k === yest ? "Yesterday" : g.d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
-            <ul class="timeline">${g.items.map((e) => { const [ic] = EVENT_META[e.type] || ["check"]; return `
-              <li><span class="tl-icon t-${esc(e.type)}">${icon(ic)}</span><div class="grow"><div>${esc(e.text)}</div><div class="muted small">${new Date(e.date).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</div></div></li>`; }).join("")}</ul>
-          </div>`).join("") : `<div class="card empty">No activity yet. Your quizzes, completed topics and other activity will appear here.</div>`}`;
-    }
-    return `
-    <div class="page-head spread"><div><h1>History</h1><p class="muted">Everything you've done on YourGATEBuddy${signedIn() ? ", synced to your account" : ""}.</p></div>${tabs}</div>
-    ${!signedIn() && cloud().configured ? `<div class="card banner" style="margin-bottom:16px">${icon("cloud")}<div class="grow small">Your history is saved only on this device. <a href="#/signin">Sign in</a> to keep it safe and use it on other devices.</div></div>` : ""}
-    ${body}`;
-  };
-  views.history.mount = () => {
-    $$("#hist-tabs button").forEach((b) => b.addEventListener("click", () => { histUI.tab = b.dataset.t; render(); }));
-    $$("#hist-filter button").forEach((b) => b.addEventListener("click", () => { histUI.filter = b.dataset.f; render(); }));
-    $$("[data-unsave]").forEach((b) => b.addEventListener("click", () => { const it = Store.get().saved[Number(b.dataset.unsave)]; if (it) { Store.toggleSaved(it, it.branch); render(); } }));
-    $("#practise-saved")?.addEventListener("click", () => {
-      const qs = shuffle(Store.get().saved).slice(0, 20).map((x) => ({ id: x.id, qid: x.id, q: x.q, o: x.o, a: x.a, ex: x.ex, subject: x.subject }));
-      startQuiz(qs, { mode: "saved", subject: "mixed", count: qs.length, branch: Store.get().profile.branch });
-    });
-  };
-
-  // ---------- router ----------
-  function parseHash() {
-    const raw = location.hash.replace(/^#\/?/, "");
-    const [pathPart, anchor] = raw.split("#");
-    const [path, query] = pathPart.split("?");
-    return { route: path || "", params: new URLSearchParams(query || ""), anchor };
-  }
-  const PRIVATE = ["dashboard", "study", "quiz", "progress", "reminders", "settings", "profile", "history"];
-  let lastRoute = null;
-
-  function render() {
-    let { route, params, anchor } = parseHash();
-    const onboarded = !!Store.get().profile;
-    if (!route) route = onboarded ? "dashboard" : "home";
-    if (PRIVATE.includes(route) && !onboarded) route = "onboard";
-    if (!views[route]) route = onboarded ? "dashboard" : "home";
-    if (route !== "quiz" && quiz.phase !== "setup") { stopTimer(); quiz.phase = "setup"; }
-
-    renderChrome(route);
-    const main = $("#app");
-    main.innerHTML = views[route](params);
-    views[route].mount && views[route].mount(params);
-    const titles = { signin: "Sign in", history: "History", home: "AI GATE Preparation Companion", dashboard: "Dashboard", study: "Study", quiz: "Quiz", progress: "Progress", reminders: "Reminders", settings: "Settings", profile: "Profile", onboard: "Get started" };
-    document.title = `YourGATEBuddy · ${titles[route] || "GATE Prep"}`;
-    if (route !== lastRoute) {
-      if (anchor) setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth" }), 30);
-      else window.scrollTo(0, 0);
-    } else if (anchor) {
-      document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth" });
-    }
-    lastRoute = route;
-  }
-
-  window.addEventListener("hashchange", render);
-  window.addEventListener("gb:cloud", (e) => {
-    if (e.detail && e.detail.authChanged) {
-      applyTheme();
-      const { route } = parseHash();
-      // After signing in, send the learner on: dashboard if their account has a profile, otherwise onboarding.
-      if (route === "signin" && signedIn() && cloud().status !== "loading") { location.hash = Store.get().profile ? "#/dashboard" : "#/onboard"; return; }
-      render();
-    } else {
-      const line = $("#sync-line");
-      if (line) { line.querySelector("span").textContent = syncLabel(); line.classList.toggle("err", cloud().status === "error"); }
-    }
-  });
+function renderThemeBtn() {
+  const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+  $('#themeBtn').innerHTML = icon(dark ? 'sun' : 'moon', 18);
+}
+export function applyTheme() {
+  const t = S().settings.theme;
+  if (t === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  renderThemeBtn();
+}
+$('#themeBtn').addEventListener('click', () => {
+  const isDark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+  S().settings.theme = isDark ? 'light' : 'dark';
+  commit();
   applyTheme();
-  render();
-  checkReminders();
-  setInterval(checkReminders, 20000);
-  $("#year").textContent = new Date().getFullYear();
-})();
+});
+
+/* ---------- Timer chip ---------- */
+function renderTimerChip() {
+  const t = S().timer;
+  const chip = $('#timerChip');
+  if (!t) {
+    chip.hidden = true;
+    return;
+  }
+  chip.hidden = false;
+  chip.classList.toggle('paused', !t.running);
+  const ms = t.mode === 'pomodoro' ? timer.phaseLength(t) - timer.elapsed(t) : timer.elapsed(t);
+  const label = t.phase === 'break' ? 'Break' : subjectById(t.subject).short;
+  chip.innerHTML = `<span class="pulse"></span>${fmtClock(ms)}<span style="opacity:.6;font-family:var(--font);font-size:12px">${esc(label)}</span>`;
+}
+
+/* ---------- Router ---------- */
+let unmount = null;
+function parseHash() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const [path, q = ''] = h.split('?');
+  const route = ROUTES[path] ? path : 'dashboard';
+  return { route, params: Object.fromEntries(new URLSearchParams(q)) };
+}
+function navigate() {
+  const { route, params } = parseHash();
+  const r = ROUTES[route];
+  if (typeof unmount === 'function') unmount();
+  unmount = null;
+  const viewEl = $('#view');
+  const fresh = viewEl.cloneNode(false); // drop old listeners
+  viewEl.replaceWith(fresh);
+  document.title = `${r.title} · YourGATEBuddy`;
+  $('#pageTitle').textContent = r.title;
+  $('#pageSub').textContent = r.sub || '';
+  markActive();
+  unmount = r.view.mount(fresh, params, { setSub: (t) => ($('#pageSub').textContent = t) });
+  window.scrollTo({ top: 0 });
+}
+window.addEventListener('hashchange', navigate);
+
+/* ---------- Onboarding ---------- */
+function onboarding() {
+  const p = S().profile;
+  let branch = p.branch || 'CS';
+  openModal({
+    title: 'Welcome',
+    wide: true,
+    body: `
+      <div class="onboard-hero"><div class="brand onboard-brand"><img class="brand-mark" src="assets/img/logo-mark.png" alt="" width="64" height="64"><span class="brand-text"><span class="brand-name">Your<b>GATE</b>Buddy<i>.com</i></span><span class="brand-tag">Prepare · Practise · Revise · Crack GATE</span></span></div><h3>Your GATE journey, organised.</h3>
+      <p class="muted" style="margin:6px 0 18px">Your paper's syllabus, offline topic tests, AI quizzes and notes, practice papers, goals and a focus timer, all in one calm place. ${cloud().configured ? 'Already have an account? Sign in to bring back your progress.' : 'Your data stays on this device.'}</p></div>
+      <div class="stack">
+        <div class="field"><span class="label">Your GATE paper</span>
+          <div class="branch-pick">${BRANCHES.map((b) => `<button type="button" class="mode-card ${b.id === branch ? 'on' : ''}" data-branch="${b.id}"><span class="mc-ico">${icon(b.icon, 18)}</span><b>${esc(b.short)}</b><span>${b.id} · ${esc(b.name)}</span></button>`).join('')}</div>
+        </div>
+        <div class="field"><label for="obName">What should we call you?</label><input class="input" id="obName" placeholder="Your name" value="${esc(p.name)}"></div>
+        <div class="grid g-3" style="gap:12px">
+          <div class="field"><label for="obExam">GATE exam date</label><input class="input" type="date" id="obExam" value="${p.examDate}"></div>
+          <div class="field"><label for="obTarget">Daily study target (hours)</label><input class="input" type="number" min="1" max="16" id="obTarget" value="${p.dailyTarget}"></div>
+          <div class="field"><label for="obScore">Target marks (out of 100)</label><input class="input" type="number" min="10" max="100" step="1" id="obScore" value="${p.targetScore || 60}"></div>
+        </div>
+        <p class="hint">GATE 2027 is pre-filled as 6 February 2027 (GATE is usually held over the first two weekends of February). Update it once the organising IIT announces your paper's date.</p>
+      </div>`,
+    foot: `${cloud().configured && !cloud().user ? `<a class="btn ghost lg" href="#/profile" data-close>Sign in</a>` : ''}<button class="btn accent lg block" id="obGo" style="flex:1">Start preparing ${icon('arrow', 18)}</button>`,
+    onMount(m, close) {
+      m.querySelectorAll('[data-branch]').forEach((b) => b.addEventListener('click', () => {
+        branch = b.dataset.branch;
+        m.querySelectorAll('[data-branch]').forEach((x) => x.classList.toggle('on', x === b));
+      }));
+      m.querySelector('a[href="#/profile"]')?.addEventListener('click', () => {
+        p.onboarded = true; // they'll set up their profile after signing in
+        p.branch ||= branch;
+        commit();
+      });
+      m.querySelector('#obGo').addEventListener('click', () => {
+        p.name = m.querySelector('#obName').value.trim();
+        p.branch = branch;
+        p.examDate = m.querySelector('#obExam').value || p.examDate;
+        p.dailyTarget = Math.max(1, Math.min(16, Number(m.querySelector('#obTarget').value) || 6));
+        p.targetScore = Math.max(10, Math.min(100, Number(m.querySelector('#obScore').value) || 60));
+        p.startDate = p.startDate || dateKey();
+        p.onboarded = true;
+        commit();
+        close();
+        navigate();
+        toast(`Welcome aboard${p.name ? ', ' + p.name : ''}!`, 'good', 'Tip: open Study Material and pick your first topic.');
+      });
+    },
+  });
+}
+
+/* ---------- Paper (branch) ---------- */
+let currentBranch = null;
+/** Points data.js at the learner's paper. Returns true when it changed. */
+function syncBranch() {
+  const want = S().profile.branch || 'CS';
+  if (want === currentBranch) return false;
+  currentBranch = setBranch(want).id;
+  return true;
+}
+
+/* ---------- Boot ---------- */
+$('#year').textContent = new Date().getFullYear();
+syncBranch();
+renderNav();
+renderCountdown();
+applyTheme();
+renderTimerChip();
+renderAccountBtn();
+navigate();
+onCloudChange(renderAccountBtn);
+// Cloud data replaced what was on this device (sign-in on a new device, edits from another device, sign-out).
+window.addEventListener('ygb:datareplaced', () => {
+  syncBranch();
+  renderNav();
+  renderCountdown();
+  applyTheme();
+  renderTimerChip();
+  renderAccountBtn();
+  navigate();
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderThemeBtn);
+
+let lastNavDue = notesDue().length;
+subscribe(() => {
+  if (syncBranch()) {
+    // The learner switched GATE paper: every view shows a different syllabus now.
+    renderNav();
+    navigate();
+  }
+  renderCountdown();
+  renderTimerChip();
+  renderAccountBtn();
+  const due = notesDue().length;
+  if (due !== lastNavDue) {
+    lastNavDue = due;
+    renderNav();
+  }
+});
+
+let n = 0;
+setInterval(() => {
+  timer.tick();
+  renderTimerChip();
+  window.dispatchEvent(new Event('ygb:tick'));
+  if (++n % 15 === 0) checkReminders();
+}, 1000);
+checkReminders();
+
+// Restore a signed-in user's data before deciding whether this is a first visit.
+Promise.race([initCloud(), new Promise((r) => setTimeout(r, 6000))])
+  .catch((e) => console.warn(e))
+  .finally(() => {
+    renderAccountBtn();
+    if (!S().profile.onboarded && !document.querySelector('.modal-backdrop')) onboarding();
+  });

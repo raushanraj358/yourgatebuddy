@@ -1,246 +1,338 @@
-/* YourGATEBuddy — accounts and cloud sync (Firebase Auth + Firestore).
- *
- * Firestore layout (see firestore.rules):
- *   users/{uid}                 profile, settings (never the API key), studied, activity, reminders, saved
- *   users/{uid}/attempts/{id}   one document per quiz attempt
- *   users/{uid}/events/{id}     one document per activity-log entry
- *
- * Exposes window.GB_CLOUD and fires a "gb:cloud" event whenever auth or sync status changes.
- */
-const Store = window.GB_STORE;
-const config = window.GB_FIREBASE_CONFIG;
-const SDK = "https://www.gstatic.com/firebasejs/10.12.2";
+// Optional accounts (Supabase). Signed-in users get their whole study data saved to one row in the cloud,
+// so their profile and progress follow them across devices. Guests keep using the app locally, exactly as before.
+import { S, subscribe, snapshot, replaceAll, resetAll, isBlank, dataSummary, commit } from './store.js';
+import { config, loadConfig, cloudConfigured } from './config.js';
+import { openModal, toast, confirmDialog } from './ui.js';
+import { esc } from './utils.js';
 
-const cloud = {
-  configured: !!(config && config.apiKey && config.projectId),
-  ready: false, // auth state resolved
-  user: null, // { uid, name, email, photo, provider }
-  status: "idle", // idle | loading | syncing | synced | offline | error
-  lastSynced: null,
-  error: "",
-};
-window.GB_CLOUD = cloud;
+const SUPABASE_ESM = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm';
+const META_KEY = 'ygb:sync';
+const TABLE = 'gate_user_data';
+const PUSH_DELAY = 2500;
 
-function emit(authChanged = false) {
-  window.dispatchEvent(new CustomEvent("gb:cloud", { detail: { authChanged } }));
+let sb = null;
+let user = null;
+let status = 'off'; // off | signed-out | pending | syncing | synced | paused | offline | error
+let lastSyncAt = 0;
+let suppress = false; // true while we replace local data with cloud data (don't echo it back)
+let prompting = false;
+let pushTimer = null;
+let chain = Promise.resolve();
+const listeners = new Set();
+
+function readMeta() {
+  try { return JSON.parse(localStorage.getItem(META_KEY)) || {}; } catch { return {}; }
+}
+let meta = readMeta(); // { uid, rev, dirty } — which account this device's data belongs to and the last cloud revision seen
+function saveMeta() {
+  try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch {}
 }
 
-const FRIENDLY = {
-  "auth/invalid-credential": "Incorrect email or password.",
-  "auth/wrong-password": "Incorrect email or password.",
-  "auth/user-not-found": "No account found with that email.",
-  "auth/email-already-in-use": "An account with this email already exists. Try signing in.",
-  "auth/weak-password": "Password must be at least 6 characters.",
-  "auth/invalid-email": "Please enter a valid email address.",
-  "auth/popup-closed-by-user": "Sign-in was cancelled.",
-  "auth/cancelled-popup-request": "Sign-in was cancelled.",
-  "auth/too-many-requests": "Too many attempts. Please wait a few minutes and try again.",
-  "auth/network-request-failed": "Network error. Check your connection.",
-  "auth/unauthorized-domain": "This domain isn't authorised in Firebase. Add it under Authentication → Settings → Authorized domains.",
-  "auth/operation-not-allowed": "This sign-in method isn't enabled in Firebase yet.",
-};
-const friendly = (e) => new Error(FRIENDLY[e && e.code] || (e && e.message) || "Something went wrong.");
+function setStatus(s) {
+  status = s;
+  if (s === 'synced') lastSyncAt = Date.now();
+  listeners.forEach((fn) => fn());
+}
+function fail(e) {
+  console.warn('Cloud sync failed:', e);
+  setStatus(navigator.onLine ? 'error' : 'offline');
+}
+/** Run sync steps one at a time. */
+const queue = (fn) => (chain = chain.then(fn, fn).catch(fail));
 
-if (!cloud.configured) {
-  cloud.ready = true;
-  emit(true);
-} else {
-  init().catch((e) => {
-    console.error(e);
-    cloud.ready = true;
-    cloud.status = "error";
-    cloud.error = "Couldn't load sign-in. Check your connection.";
-    emit(true);
+export const onCloudChange = (fn) => (listeners.add(fn), () => listeners.delete(fn));
+export const cloud = () => ({ configured: cloudConfigured(), ready: Boolean(sb), user, status, lastSyncAt, googleAuth: Boolean(config().googleAuth), emailAuth: Boolean(config().emailAuth) });
+
+/* ---------------- Boot ---------------- */
+
+export async function initCloud() {
+  await loadConfig();
+  if (!cloudConfigured()) return setStatus('off');
+  try {
+    const { createClient } = await import(SUPABASE_ESM);
+    sb = createClient(config().supabaseUrl, config().supabaseAnonKey, {
+      auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true, storageKey: 'ygb:auth' },
+    });
+  } catch (e) {
+    sb = null;
+    return fail(e);
+  }
+
+  const url = new URL(location.href);
+  const fromRedirect = url.searchParams.has('code');
+  const err = url.searchParams.get('error_description');
+  const { data } = await sb.auth.getSession(); // also finishes a sign-in redirect (?code=…)
+  if (fromRedirect || err) history.replaceState(null, '', location.pathname + location.hash);
+  if (err) toast('Sign-in failed', 'bad', authErrorMessage(err));
+
+  user = data?.session?.user || null;
+  setStatus(user ? 'syncing' : 'signed-out');
+  if (user && fromRedirect) toast('Signed in', 'good', user.email || '');
+
+  sb.auth.onAuthStateChange((_event, session) => {
+    const next = session?.user || null;
+    const changed = next?.id !== user?.id;
+    user = next;
+    if (!changed) return; // token refresh etc.
+    // Supabase advises not to await its own calls inside this callback.
+    setTimeout(() => {
+      if (user) {
+        toast('Signed in', 'good', user.email || '');
+        sync();
+      } else setStatus('signed-out');
+    }, 0);
   });
+
+  subscribe(() => {
+    if (suppress || !user || meta.uid !== user.id) return;
+    meta.dirty = true;
+    saveMeta();
+    schedulePush();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!user || prompting) return;
+    if (document.visibilityState === 'visible') sync();
+    else if (meta.dirty) { clearTimeout(pushTimer); queue(doPush); }
+  });
+  window.addEventListener('online', () => user && sync());
+
+  if (user) await sync();
 }
 
-async function init() {
-  const [{ initializeApp }, A, F] = await Promise.all([
-    import(`${SDK}/firebase-app.js`),
-    import(`${SDK}/firebase-auth.js`),
-    import(`${SDK}/firebase-firestore.js`),
-  ]);
-  const app = initializeApp(config);
-  const auth = A.getAuth(app);
-  const db = F.getFirestore(app);
+/* ---------------- Sync ---------------- */
 
-  const userDoc = (uid) => F.doc(db, "users", uid);
-  const sub = (uid, name) => F.collection(db, "users", uid, name);
-  const clean = (o) => JSON.parse(JSON.stringify(o)); // Firestore rejects `undefined`
+export const sync = () => queue(doSync);
 
-  let synced = { attempts: new Set(), events: new Set() };
-  let loadedFor = null;
-  let pushTimer = null;
-  let pushing = Promise.resolve();
+function schedulePush() {
+  clearTimeout(pushTimer);
+  setStatus('pending');
+  pushTimer = setTimeout(() => queue(doPush), PUSH_DELAY);
+}
 
-  function mainDocData(s) {
-    const { apiKey, ...settings } = s.settings; // the API key never leaves the device
-    return clean({
-      profile: s.profile, settings, studied: s.studied, activity: s.activity,
-      reminders: s.reminders.map(({ lastFired, ...r }) => r), saved: s.saved,
-      updatedAt: new Date().toISOString(),
-    });
+async function fetchRow() {
+  const { data, error } = await sb.from(TABLE).select('data, rev, updated_at').eq('user_id', user.id).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function doSync() {
+  if (!sb || !user || prompting) return;
+  setStatus('syncing');
+  const row = await fetchRow();
+  if (meta.uid !== user.id) return link(row); // first sign-in on this device
+  if (!row) {
+    meta.rev = 0;
+    meta.dirty = true;
+    saveMeta();
+    return doPush();
   }
+  if (row.rev === meta.rev) return meta.dirty ? doPush() : setStatus('synced');
+  if (row.rev > meta.rev && !meta.dirty) return adopt(row);
+  return choose(row, 'conflict');
+}
 
-  async function commitInChunks(ops) {
-    for (let i = 0; i < ops.length; i += 400) {
-      const batch = F.writeBatch(db);
-      ops.slice(i, i + 400).forEach((fn) => fn(batch));
-      await batch.commit();
+async function link(row) {
+  if (!row) {
+    meta = { uid: user.id, rev: 0, dirty: true };
+    saveMeta();
+    return doPush();
+  }
+  if (isBlank()) return adopt(row);
+  return choose(row, 'link');
+}
+
+async function doPush() {
+  if (!sb || !user || meta.uid !== user.id || prompting) return;
+  clearTimeout(pushTimer);
+  setStatus('syncing');
+  const data = snapshot();
+  const next = (meta.rev || 0) + 1;
+  meta.dirty = false; // edits made while this request is in flight mark it dirty again
+  saveMeta();
+  try {
+    let ok;
+    if (!meta.rev) {
+      const { error } = await sb.from(TABLE).insert({ user_id: user.id, data, rev: next });
+      if (error && error.code !== '23505') throw error; // 23505 = a row already exists → conflict
+      ok = !error;
+    } else {
+      const { data: rows, error } = await sb
+        .from(TABLE)
+        .update({ data, rev: next, updated_at: new Date().toISOString() })
+        .eq('user_id', user.id)
+        .eq('rev', meta.rev)
+        .select('rev');
+      if (error) throw error;
+      ok = rows.length > 0;
     }
-  }
-
-  async function push() {
-    const u = cloud.user;
-    if (!u || loadedFor !== u.uid) return;
-    const s = Store.get();
-    cloud.status = "syncing"; emit();
-    try {
-      const ops = [(b) => b.set(userDoc(u.uid), mainDocData(s))];
-      const newAttempts = s.attempts.filter((a) => !synced.attempts.has(a.id));
-      const newEvents = s.events.filter((e) => !synced.events.has(e.id));
-      newAttempts.forEach((a) => ops.push((b) => b.set(F.doc(sub(u.uid, "attempts"), a.id), clean(a))));
-      newEvents.forEach((e) => ops.push((b) => b.set(F.doc(sub(u.uid, "events"), e.id), clean(e))));
-      await commitInChunks(ops);
-      newAttempts.forEach((a) => synced.attempts.add(a.id));
-      newEvents.forEach((e) => synced.events.add(e.id));
-      cloud.status = navigator.onLine === false ? "offline" : "synced";
-      cloud.lastSynced = new Date();
-      cloud.error = "";
-    } catch (e) {
-      console.error(e);
-      cloud.status = navigator.onLine === false ? "offline" : "error";
-      cloud.error = e.code === "permission-denied" ? "Cloud database rules are blocking sync. Check firestore.rules." : "Sync failed. We'll retry on your next change.";
-    }
-    emit();
-  }
-
-  function schedulePush(delay = 1500) {
-    clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => { pushing = pushing.then(push); }, delay);
-  }
-  async function flush() {
-    clearTimeout(pushTimer);
-    pushing = pushing.then(push);
-    await pushing;
-  }
-
-  const byIdUnion = (a, b) => {
-    const seen = new Set(a.map((x) => x.id));
-    return a.concat(b.filter((x) => !seen.has(x.id)));
-  };
-  const newestFirst = (list, key) => list.sort((x, y) => String(y[key]).localeCompare(String(x[key])));
-
-  async function loadAndMerge(u) {
-    cloud.status = "loading"; emit();
-    const [snap, attemptsSnap, eventsSnap] = await Promise.all([
-      F.getDoc(userDoc(u.uid)),
-      F.getDocs(F.query(sub(u.uid, "attempts"), F.orderBy("date", "desc"), F.limit(Store.limits.MAX_ATTEMPTS))),
-      F.getDocs(F.query(sub(u.uid, "events"), F.orderBy("date", "desc"), F.limit(Store.limits.MAX_EVENTS))),
-    ]);
-    const remote = snap.exists() ? snap.data() : {};
-    const remoteAttempts = attemptsSnap.docs.map((d) => d.data());
-    const remoteEvents = eventsSnap.docs.map((d) => d.data());
-    synced = { attempts: new Set(remoteAttempts.map((a) => a.id)), events: new Set(remoteEvents.map((e) => e.id)) };
-
-    const local = Store.get();
-    // Local data belonging to a different account is never merged into this one.
-    const useLocal = !local.owner || local.owner === u.uid;
-    const L = useLocal ? local : { ...local, profile: null, studied: {}, activity: {}, reminders: [], attempts: [], events: [], saved: [] };
-
-    const activity = { ...(remote.activity || {}) };
-    Object.entries(L.activity).forEach(([k, v]) => { activity[k] = Math.max(activity[k] || 0, v); });
-
-    Store.replace({
-      owner: u.uid,
-      profile: remote.profile || L.profile,
-      settings: { ...L.settings, ...(remote.settings || {}), apiKey: local.settings.apiKey },
-      studied: { ...(remote.studied || {}), ...L.studied },
-      activity,
-      reminders: byIdUnion(remote.reminders || [], L.reminders).map((r) => ({ lastFired: "", ...r, ...(L.reminders.find((x) => x.id === r.id) ? { lastFired: L.reminders.find((x) => x.id === r.id).lastFired } : {}) })),
-      saved: newestFirst(byIdUnion(remote.saved || [], L.saved), "savedAt").slice(0, Store.limits.MAX_SAVED),
-      attempts: newestFirst(byIdUnion(remoteAttempts, L.attempts), "date").slice(0, Store.limits.MAX_ATTEMPTS),
-      events: newestFirst(byIdUnion(remoteEvents, L.events), "date").slice(0, Store.limits.MAX_EVENTS),
-    });
-    loadedFor = u.uid;
-    await flush(); // upload anything that only existed on this device
-  }
-
-  Store.onChange(() => { if (cloud.user && loadedFor === cloud.user.uid) schedulePush(); });
-  window.addEventListener("online", () => { if (cloud.user) schedulePush(0); });
-  window.addEventListener("beforeunload", () => { if (pushTimer) { clearTimeout(pushTimer); push(); } });
-
-  A.onAuthStateChanged(auth, async (fbUser) => {
-    if (!fbUser) {
-      cloud.user = null; loadedFor = null; cloud.status = "idle";
-      cloud.ready = true; emit(true);
-      return;
-    }
-    cloud.user = {
-      uid: fbUser.uid, name: fbUser.displayName || "", email: fbUser.email || "", photo: fbUser.photoURL || "",
-      provider: (fbUser.providerData[0] && fbUser.providerData[0].providerId) || "password",
-    };
-    try {
-      await loadAndMerge(cloud.user);
-      if (cloud.pendingLog) { Store.logEvent("account", cloud.pendingLog); cloud.pendingLog = ""; }
-      const p = Store.get().profile;
-      if (p && !p.name && cloud.user.name) Store.setProfile({ name: cloud.user.name.split(" ")[0] });
-    } catch (e) {
-      console.error(e);
-      cloud.status = "error";
-      cloud.error = e.code === "permission-denied" ? "Cloud database rules are blocking access. Check firestore.rules." : "Couldn't load your cloud data. Working offline for now.";
-      loadedFor = cloud.user.uid; // keep working locally; later changes will try to sync
-    }
-    cloud.ready = true;
-    emit(true);
-  });
-
-  // ---- Public API ----
-  Object.assign(cloud, {
-    async signInGoogle() {
-      const provider = new A.GoogleAuthProvider();
-      cloud.pendingLog = "Signed in with Google";
-      try { await A.signInWithPopup(auth, provider); }
-      catch (e) {
-        if (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment") return A.signInWithRedirect(auth, provider);
-        cloud.pendingLog = ""; throw friendly(e);
+    if (!ok) {
+      meta.dirty = true;
+      saveMeta();
+      const row = await fetchRow();
+      if (!row) {
+        meta.rev = 0;
+        saveMeta();
+        return doPush();
       }
-    },
-    async signUpEmail(name, email, password) {
-      cloud.pendingLog = "Created an account";
-      try {
-        const cred = await A.createUserWithEmailAndPassword(auth, email, password);
-        if (name) { await A.updateProfile(cred.user, { displayName: name }); cloud.user && (cloud.user.name = name); }
-      } catch (e) { cloud.pendingLog = ""; throw friendly(e); }
-    },
-    async signInEmail(email, password) {
-      cloud.pendingLog = "Signed in with email";
-      try { await A.signInWithEmailAndPassword(auth, email, password); }
-      catch (e) { cloud.pendingLog = ""; throw friendly(e); }
-    },
-    async resetPassword(email) {
-      try { await A.sendPasswordResetEmail(auth, email); } catch (e) { throw friendly(e); }
-    },
-    async signOut() {
-      Store.logEvent("account", "Signed out");
-      await flush();
-      await A.signOut(auth);
-      clearTimeout(pushTimer);
-      cloud.user = null; loadedFor = null;
-      Store.reset(); // the data is safe in the account; don't leave it on a shared device
-      emit(true);
-    },
-    syncNow: () => flush(),
-    async wipe() {
-      const u = cloud.user;
-      if (!u) return;
-      clearTimeout(pushTimer);
-      const [a, e] = await Promise.all([F.getDocs(sub(u.uid, "attempts")), F.getDocs(sub(u.uid, "events"))]);
-      const ops = [...a.docs, ...e.docs].map((d) => (b) => b.delete(d.ref));
-      ops.push((b) => b.delete(userDoc(u.uid)));
-      await commitInChunks(ops);
-      synced = { attempts: new Set(), events: new Set() };
-      Store.replace({ owner: u.uid, settings: { ...Store.get().settings } });
-    },
+      return choose(row, 'conflict');
+    }
+    meta.rev = next;
+    saveMeta();
+    if (meta.dirty) schedulePush();
+    else setStatus('synced');
+  } catch (e) {
+    meta.dirty = true;
+    saveMeta();
+    throw e;
+  }
+}
+
+function adopt(row) {
+  const { apiKey, geminiKey } = S().settings; // keys never leave the device; keep this device's
+  suppress = true;
+  try {
+    replaceAll(row.data || {});
+    Object.assign(S().settings, { apiKey, geminiKey });
+    commit();
+  } finally {
+    suppress = false;
+  }
+  meta = { uid: user.id, rev: row.rev, dirty: false };
+  saveMeta();
+  setStatus('synced');
+  window.dispatchEvent(new Event('ygb:datareplaced'));
+}
+
+/** Both this device and the account have different data: let the user pick which survives. */
+function choose(row, kind) {
+  // Same content on both sides (e.g. two tabs syncing at once): nothing to ask.
+  if (JSON.stringify(row.data) === JSON.stringify(snapshot())) {
+    meta = { uid: user.id, rev: row.rev, dirty: false };
+    saveMeta();
+    return setStatus('synced');
+  }
+  prompting = true;
+  setStatus('paused');
+  return new Promise((resolve) => {
+    let decided = false;
+    const close = openModal({
+      title: kind === 'link' ? 'Which progress should we keep?' : 'Changes on two devices',
+      body: `
+        <p class="muted">${kind === 'link'
+          ? 'This device already has study data, and so does your account.'
+          : 'Your account was updated from another device while this device also had unsaved changes.'} Choose which one to keep. The other will be replaced.</p>
+        <div class="stack" style="margin-top:14px">
+          <div class="notice info"><div><b>Your account</b><br><span class="hint">${esc(dataSummary(row.data || {}))}</span></div></div>
+          <div class="notice"><div><b>This device</b><br><span class="hint">${esc(dataSummary())}</span></div></div>
+        </div>
+        <p class="hint" style="margin-top:12px">Unsure? Close this, export a backup in Settings first, then press "Sync now" on your Profile.</p>`,
+      foot: `<button class="btn" data-k="device">Keep this device's</button><button class="btn primary" data-k="cloud">Use my account's</button>`,
+      onMount(m) {
+        m.querySelectorAll('[data-k]').forEach((b) =>
+          b.addEventListener('click', async () => {
+            decided = true;
+            prompting = false;
+            close();
+            try {
+              if (b.dataset.k === 'cloud') adopt(row);
+              else {
+                meta = { uid: user.id, rev: row.rev, dirty: true };
+                saveMeta();
+                await doPush();
+              }
+            } catch (e) {
+              fail(e);
+            }
+            resolve();
+          })
+        );
+        new MutationObserver((_, obs) => {
+          if (document.body.contains(m)) return;
+          obs.disconnect();
+          if (!decided) {
+            prompting = false;
+            setStatus('paused');
+            resolve();
+          }
+        }).observe(document.getElementById('modalRoot'), { childList: true });
+      },
+    });
   });
+}
+
+/* ---------------- Account actions ---------------- */
+
+/** Standard wording for sign-in/account errors (raw Supabase text goes to the console only). */
+export function authErrorMessage(e) {
+  const raw = String(e?.message || e || '');
+  if (raw) console.warn('[auth]', raw);
+  if (/rate limit|too many|security purposes/i.test(raw)) return 'Too many attempts. Please wait a few minutes and try again.';
+  if (/invalid.*email|email.*invalid|unable to validate email/i.test(raw)) return 'Please enter a valid email address.';
+  if (/fetch|network|load failed/i.test(raw)) return 'Could not connect. Check your internet connection and try again.';
+  return 'Something went wrong. Please try again.';
+}
+
+/** The signed-in user's access token (refreshed if needed), or null for guests. */
+export async function accessToken() {
+  if (!sb || !user) return null;
+  try {
+    const { data } = await sb.auth.getSession();
+    return data?.session?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+const redirectURL = () => location.origin + location.pathname;
+
+export async function signInWithEmail(email) {
+  if (!sb) throw new Error('Accounts are not available right now.');
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectURL(), shouldCreateUser: true } });
+  if (error) throw error;
+}
+
+export async function signInWithGoogle() {
+  if (!sb) throw new Error('Accounts are not available right now.');
+  const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: redirectURL() } });
+  if (error) throw error;
+}
+
+function clearDevice() {
+  const theme = S().settings.theme;
+  suppress = true;
+  try {
+    resetAll();
+    S().settings.theme = theme;
+    S().profile.onboarded = true;
+    commit();
+  } finally {
+    suppress = false;
+  }
+  meta = {};
+  saveMeta();
+  window.dispatchEvent(new Event('ygb:datareplaced'));
+}
+
+/** Saves pending changes, signs out and clears this device (the data stays safe in the account). */
+export async function signOut() {
+  if (!sb || !user) return false;
+  if (meta.dirty && meta.uid === user.id) await queue(doPush);
+  if (meta.dirty && !(await confirmDialog('Some recent changes have not reached your account yet (are you offline?). Sign out anyway and lose them?', 'Sign out'))) return false;
+  await sb.auth.signOut();
+  user = null;
+  clearDevice();
+  setStatus('signed-out');
+  return true;
+}
+
+/** Deletes the cloud copy of this user's data and signs out. Data on this device is kept. */
+export async function deleteCloudData() {
+  if (!sb || !user) return;
+  const { error } = await sb.from(TABLE).delete().eq('user_id', user.id);
+  if (error) throw error;
+  meta = {};
+  saveMeta();
+  await sb.auth.signOut();
+  user = null;
+  setStatus('signed-out');
 }

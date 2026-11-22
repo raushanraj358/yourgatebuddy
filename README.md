@@ -1,77 +1,100 @@
-# YourGATEBuddy
+# YourGATEBuddy · yourgatebuddy.com
 
-**yourgatebuddy.com** is a free, AI-powered study companion for GATE aspirants.
+A calm, modern study companion for GATE aspirants: the full syllabus of your paper with a week-by-week study plan, offline topic tests,
+AI quizzes and notes, timed GATE practice papers, goals, reminders and progress tracking.
 
 **Prepare · Practise · Revise · Crack GATE**
 
+**Live site:** https://yourgatebuddy.com
+
+No install and no build step. It's a static web app on GitHub Pages, with optional accounts and free AI powered by Supabase.
+It shares its design and architecture with [YourNEETBuddy](https://yourneetbuddy.com) and [YourIASBuddy](https://youriasbuddy.com).
+
 ## Features
 
-| Feature | What it does |
+| Section | What it does |
 |---|---|
-| **8 GATE papers** | CSE/IT (CS), Electrical (EE), ECE (EC), Mechanical (ME), Civil (CE), Instrumentation (IN), Chemical (CH), Data Science & AI (DA), plus General Aptitude and Engineering Mathematics |
-| **AI quiz** | Claude generates fresh GATE-style MCQs with explanations for any subject, topic and difficulty |
-| **Smart practice** | A built-in question bank that works offline and favours unseen questions and your weakest subjects |
-| **Syllabus tracker** | Subject → topic checklist for each paper, with approximate marks weightage |
-| **Progress tracking** | Streaks, daily goal ring, 14-day activity chart, accuracy by subject, quiz history |
-| **Reminders** | Weekly or daily study reminders as browser notifications, plus a `.ics` file for Google or Apple Calendar |
-| **Dashboard** | Exam countdown, today's goal, weak areas, upcoming reminders, tip of the day |
-| **Sign in & cloud sync** | Google or email/password accounts (Firebase). Profile, quiz history, syllabus progress, reminders, saved questions and the activity log sync across devices. Guest progress is uploaded on first sign-in |
-| **History** | A day-by-day timeline of every activity (quizzes, completed topics, saved questions, reminders, sign-ins) plus a **Saved questions** revision set you can practise |
-| **Progress report** | One-click printable / PDF progress report |
-| **Guest mode** | Works without an account. Data stays in `localStorage`, with export, import and reset |
-| **Light and dark mode**, responsive layout with a mobile tab bar |
+| **8 GATE papers** | CSE/IT (CS), Electrical (EE), ECE (EC), Mechanical (ME), Civil (CE), Instrumentation (IN), Chemical (CH), Data Science & AI (DA), each with General Aptitude and its Engineering Mathematics. Pick one at onboarding; switch any time in Profile |
+| **Dashboard** | Countdown to GATE, today's hours vs target, streak, tasks, quiz accuracy, syllabus covered per subject, goals, weekly chart, reminders, revision queue |
+| **Study Material** | Subject → topic → sub-topic checklist for your paper, with weightage. Each topic has a status (Not started / Studying / Done / Revised), **AI study notes**, an **AI doubt solver** and quizzes |
+| **Study plan** | Spreads your unfinished topics over the weeks left before the exam (high-weightage and weak subjects first), with the last weeks kept for revision and practice papers. Updates as you mark topics done |
+| **Quiz & Practice Papers** | **Topic tests** from a built-in bank of ~180 GATE-style questions (works offline), **AI quizzes** on any topic (conceptual, numerical, statement-based, output/trace), and **timed practice papers** in GATE proportions. GATE marking: 1- and 2-mark questions, −⅓ / −⅔ for wrong answers. Mistake book → Notes |
+| **Goals** | Weekly targets (hours, topics, questions) tracked automatically, target marks out of 100 with the pace needed, personal goals with deadlines |
+| **Daily Tracker** | Week-strip planner, subject-tagged tasks, a GATE day template, habits, consistency heatmap |
+| **Study Hours** | Pomodoro + stopwatch, manual logging, charts, subject split, heatmap |
+| **Reminders** | Once / daily / weekdays / weekly reminders with GATE presets, browser notifications + chime |
+| **Notes** | Markdown notebook with highlights, subject filters, search, pinning, spaced revision (1-3-7-15-30-60 days), "Quiz me on this note" |
+| **Resources** | Standard books for your paper, NPTEL and other free courses, previous papers, plus your own links |
+| **Profile** | Continue with Google (or an email link) to save and sync progress across devices. Paper, exam date, daily target, target marks, lifetime stats |
+| **Settings** | AI (built-in free AI, or your own Gemini/OpenAI key), theme & sound, JSON backup/restore |
 
-## Tech
+**No account needed.** Guests can use everything and their data stays in the browser. Signing in saves the same data to the user's account.
+Progress from the first version of the site (localStorage key `ygb.v1`) is imported automatically on the first visit: paper, finished topics,
+quiz history, reminders and saved questions (as a note).
 
-A static site with no build step: plain HTML, CSS and JavaScript, using hash routing (`#/dashboard`, `#/study`, `#/quiz`, `#/progress`, `#/reminders`, `#/settings`, `#/profile`).
+## How it's hosted (all free)
 
-```
-index.html            App shell
-privacy.html, terms.html
-assets/css/styles.css Design system (tokens, light/dark)
-assets/js/data.js     Papers, syllabus, question bank, tips
-assets/js/store.js    localStorage persistence + derived stats
-assets/js/ai.js       Claude quiz generation (structured JSON output)
-assets/js/firebase-config.js  Your Firebase project config (null = guest-only mode)
-assets/js/cloud.js    Sign-in + Firestore sync (ES module, Firebase SDK from CDN)
-firestore.rules       Security rules: each user can only access their own data
-assets/js/app.js      Router + all views
-assets/img/logo.svg
-```
+| Piece | Service | Notes |
+|---|---|---|
+| Website | GitHub Pages + custom domain `yourgatebuddy.com` | Every push to `main` publishes the site via `.github/workflows/jekyll-gh-pages.yml` |
+| Sign-in | Supabase Auth | Google sign-in (email magic link as a fallback) |
+| Cloud sync | Supabase Postgres | One row per user in `gate_user_data`, protected by row-level security |
+| Free AI | Supabase Edge Function `gate-ai` | Holds the Gemini key |
+| AI model | Google Gemini free tier | Free as long as billing is **not** enabled on the Google project |
+
+## One-time setup
+
+The site works in guest mode before any of this is done (topic tests, practice papers, the study plan and tracking need no setup).
+Until `assets/js/config.js` has a Supabase URL and key, the sign-in buttons are hidden and AI needs the visitor's own key.
+
+### 1. Publish on GitHub Pages
+1. Repo → **Settings → Pages → Source: GitHub Actions**. The workflow deploys on every push to `main`.
+2. Point `yourgatebuddy.com` at GitHub Pages (`A`/`AAAA` records for `@`, `CNAME` `www` → `raushanraj358.github.io`) and set the custom domain
+   in **Settings → Pages**, then tick **Enforce HTTPS**.
+
+### 2. Supabase: database + free AI
+Use a new Supabase project for YourGATEBuddy, **or** reuse an existing one (all database objects are prefixed `gate_` and the function is
+named `gate-ai`, so they don't clash with YourNEETBuddy's `neet_*` objects).
+1. Copy the **Project URL** and the **publishable / anon key** (Project Settings → API) into [`assets/js/config.js`](assets/js/config.js).
+2. **SQL Editor → New query**: paste all of [`supabase/schema.sql`](supabase/schema.sql) → **Run**.
+3. **Edge Functions → Deploy a new function → Via Editor**: name it exactly `gate-ai`, paste the whole of
+   [`supabase/functions/gate-ai/index.ts`](supabase/functions/gate-ai/index.ts) → **Deploy**. Turn **OFF** "Verify JWT".
+4. **Edge Functions → Secrets**: add `GEMINI_API_KEY` (from https://aistudio.google.com/apikey; keep billing off).
+   Optional: `ALLOWED_ORIGINS`, `AI_DAILY_LIMIT` (default 25), `AI_GUEST_DAILY_LIMIT` (default 5), `GEMINI_MODEL`.
+   If you reuse a project that already has a `GEMINI_API_KEY`, the same secret serves both functions.
+
+### 3. Google sign-in
+1. Supabase → **Authentication → URL Configuration**: Site URL `https://yourgatebuddy.com/`; Redirect URLs
+   `https://yourgatebuddy.com/`, `https://www.yourgatebuddy.com/`, `https://raushanraj358.github.io/yourgatebuddy/`, `http://localhost:5173/`.
+   (In a shared project, add these alongside the existing site's URLs.)
+2. Google Cloud Console → **Google Auth Platform**: External audience; Branding with home/privacy/terms pages on `yourgatebuddy.com` and the
+   authorised domains `yourgatebuddy.com` + `<project-ref>.supabase.co`; then publish the app.
+3. **Clients → Create client → Web application**: JavaScript origins `https://yourgatebuddy.com`, `https://www.yourgatebuddy.com`,
+   `http://localhost:5173`; redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`.
+4. Supabase → **Authentication → Sign In / Providers → Google**: enable, paste the client ID and secret, Save.
 
 ## Run locally
 
 ```bash
-python3 -m http.server 8000
-# open http://localhost:8000
+cd yourgatebuddy
+python3 -m http.server 5173
+# open http://localhost:5173
 ```
 
-## Deploy
+## Editing content
 
-Upload the folder to any static host, such as Netlify, Vercel, GitHub Pages, Cloudflare Pages or S3, and point `yourgatebuddy.com` at it.
+- **Papers, subjects, topics and sub-topics** (with weightage and approximate marks): `SYLLABUS` in [`assets/js/data.js`](assets/js/data.js).
+  Subject and topic ids are stored in user data: don't rename them. Adding topics or sub-topics is safe.
+- **Offline question bank**: `BANK` in [`assets/js/content.js`](assets/js/content.js). Items are
+  `[paper ('*' = all), subject id, topic id, question, [A, B, C, D], correctIndex, explanation, marks (1 or 2)]`.
+  Option order is shuffled at runtime unless an option says "All of these", "Both…", "None…".
+- **Resources**: `ALL_LIBRARY` in `data.js` (`branch: [...]` limits an item to some papers).
+- **AI prompts**: `assets/js/prompts.js`, then run `python3 tools/build_edge_function.py` and redeploy the `gate-ai` function.
 
-## Set up sign-in (Firebase, free tier)
+## Notes
 
-Until this is done the site runs in guest mode and the sign-in buttons are hidden.
-
-1. Go to <https://console.firebase.google.com> → **Add project** (Google Analytics is optional).
-2. **Project settings → General → Your apps → Web (`</>`)** → register the app, then copy the `firebaseConfig` object into `assets/js/firebase-config.js` (replace `null`).
-3. **Authentication → Get started → Sign-in method**: enable **Google** and **Email/Password**.
-4. **Authentication → Settings → Authorized domains**: add `yourgatebuddy.com` (and `www.yourgatebuddy.com`). `localhost` is allowed by default.
-5. **Firestore Database → Create database** (production mode, a region near your users such as `asia-south1` Mumbai). Then open the **Rules** tab, paste the contents of `firestore.rules`, and click **Publish**.
-6. Reload the site. "Sign in" now appears in the top bar.
-
-Data layout: `users/{uid}` (profile, settings, syllabus, reminders, saved questions), `users/{uid}/attempts/{id}` (quiz history), and `users/{uid}/events/{id}` (activity log).
-
-## AI quizzes
-
-AI quizzes call the Claude Messages API (`claude-opus-5-5` by default) and use structured outputs, so questions always come back as valid JSON. Right now each learner pastes **their own** Anthropic API key in **Settings**. The key is stored only in their browser.
-
-**Before a public launch**, move the call to a small backend (for example a Vercel or Cloudflare function) that holds your key, adds rate limiting, and is exposed as `ENDPOINT` in `assets/js/ai.js`. Then remove the key field from Settings. This lets visitors use AI quizzes without their own key, and your key stays off the client.
-
-## Ideas for next steps
-
-- Push notifications through a service worker, so reminders work when the tab is closed (and as an installable PWA)
-- Full-length timed mock tests with GATE marking (negative marking, NAT and MSQ questions)
-- Previous-year question bank by year and paper
-- More papers (BT, PI, AE, MA, PH and others)
+- GATE 2027 is pre-filled as **6 February 2027** (GATE is usually held over the first two weekends of February). Update `EXAM.date` in
+  `data.js` once the organising IIT announces the schedule; learners can also set their own paper's date.
+- Topic weightage (High/Medium/Low) and subject marks are guides based on recent papers, not official figures.
+- AI content and the question bank can contain mistakes. Cross-check against standard textbooks.
+- Not affiliated with the IITs, IISc or the GATE organising committee.
