@@ -284,7 +284,7 @@
           </div>
           <div class="row">
             <a class="btn btn-primary" href="#/quiz?mode=smart">${icon("spark")} Daily quiz</a>
-            <a class="btn" href="#/study">${icon("book")} Study plan</a>
+            <a class="btn" href="#/study#plan">${icon("cal")} Study plan</a>
           </div>
         </div>
       </div>
@@ -327,7 +327,7 @@
           ${b.subjects.slice(0, 6).map((s) => { const pp = syl.per[s.id]; return `
             <div style="margin-bottom:12px"><div class="spread small"><span>${esc(s.name)}</span><span class="muted">${pp.done}/${pp.all}</span></div>
             <div class="bar" style="margin-top:6px"><i style="width:${pp.pct}%"></i></div></div>`; }).join("")}
-          <a href="#/study" class="small">View full syllabus →</a>
+          <a href="#/study#syllabus" class="small">View full syllabus →</a>
         </div>
         <div class="card">
           <div class="card-title">${icon("bulb")} Tip of the day</div>
@@ -347,15 +347,90 @@
       <div class="muted small">${a.correct}/${a.total} correct · ${new Date(a.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div></div></li>`;
   }
 
+  // Study plan: spreads the unfinished topics over the weeks left before the exam,
+  // leaving the final stretch for revision and mock tests. High-weightage and weak subjects come first.
+  function buildPlan(b, p) {
+    const WEEK = 7 * 864e5;
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const exam = new Date((p.examDate || DEFAULT_EXAM) + "T00:00:00");
+    const daysLeft = Math.max(0, Math.ceil((exam - now) / 864e5));
+    const weeksLeft = Math.max(0, Math.ceil(daysLeft / 7));
+    const revisionWeeks = weeksLeft >= 12 ? 4 : weeksLeft >= 6 ? 2 : weeksLeft >= 2 ? 1 : 0;
+    const learnWeeks = Math.max(1, weeksLeft - revisionWeeks);
+
+    const bySub = Store.totals(b.id).bySubject;
+    const pending = [];
+    b.subjects.forEach((s) => {
+      const acc = bySub[s.id] && bySub[s.id].total >= 3 ? bySub[s.id].correct / bySub[s.id].total : null;
+      const priority = (s.marks || 5) / s.topics.length * (acc === null ? 1.2 : 1.6 - acc);
+      s.topics.forEach((t, i) => { if (!Store.isStudied(b.id, s.id, i)) pending.push({ sid: s.id, sname: s.name, idx: i, name: t, priority, weak: acc !== null && acc < 0.6 }); });
+    });
+    // Keep a subject's topics together (in syllabus order) and order subjects by priority.
+    const order = [...new Set(pending.slice().sort((x, y) => y.priority - x.priority).map((x) => x.sid))];
+    pending.sort((x, y) => order.indexOf(x.sid) - order.indexOf(y.sid) || x.idx - y.idx);
+
+    const perWeek = Math.max(1, Math.ceil(pending.length / learnWeeks));
+    const weeks = [];
+    for (let w = 0; w * perWeek < pending.length; w++) {
+      const start = new Date(now.getTime() + w * WEEK);
+      weeks.push({ n: w + 1, start, end: new Date(Math.min(start.getTime() + WEEK - 864e5, exam.getTime())), topics: pending.slice(w * perWeek, (w + 1) * perWeek) });
+    }
+    const revStart = new Date(Math.max(now.getTime() + weeks.length * WEEK, exam.getTime() - revisionWeeks * WEEK));
+    return { daysLeft, weeksLeft, revisionWeeks, pending, perWeek, weeks, exam, revStart, behind: weeksLeft > 0 && pending.length / learnWeeks > 10 };
+  }
+
+  function planSection(b, p) {
+    const plan = buildPlan(b, p);
+    const fmt = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    const topicRow = (t) => `<label class="topic"><input type="checkbox" data-topic="${t.sid}:${t.idx}"/><span class="grow">${esc(t.name)} <span class="muted small">· ${esc(t.sname)}</span></span>${t.weak ? '<span class="chip chip-danger">weak</span>' : ""}</label>`;
+    const head = `<div class="card-title">${icon("cal")} Your study plan</div>`;
+
+    if (plan.daysLeft === 0) {
+      return `<div class="card" id="plan">${head}<p class="muted">Your exam date (${esc(p.examDate || DEFAULT_EXAM)}) has passed or is today. Set your next exam date to get a fresh week-by-week plan.</p>
+        <a class="btn btn-primary btn-sm" href="#/profile">${icon("cal")} Update exam date</a></div>`;
+    }
+    if (!plan.pending.length) {
+      return `<div class="card" id="plan">${head}<p><b>Syllabus complete. 🎉</b> <span class="muted">With ${plan.daysLeft} days to go, spend your time on revision and timed practice.</span></p>
+        <div class="row"><a class="btn btn-primary btn-sm" href="#/quiz?mode=smart">${icon("spark")} Smart revision quiz</a><a class="btn btn-ghost btn-sm" href="#/history?tab=saved">${icon("bookmark")} Revise saved questions</a></div></div>`;
+    }
+
+    const [cur, ...rest] = plan.weeks;
+    return `
+    <div class="card" id="plan">
+      <div class="spread">${head}<span class="chip chip-primary">${plan.daysLeft} days to exam · ${fmt(plan.exam)}</span></div>
+      <p class="muted small" style="margin-top:-6px">${plan.pending.length} topics left, about <b>${plan.perWeek}</b> a week${plan.revisionWeeks ? `, then ${plan.revisionWeeks} week${plan.revisionWeeks > 1 ? "s" : ""} of revision and mock tests` : ""}. High-weightage subjects and your weak areas come first. The plan updates as you tick topics off.</p>
+      ${plan.behind ? `<div class="explain small" style="margin:0 0 14px">That's a heavy pace. Start with the highest-weightage topics and practise them with quizzes rather than aiming to cover everything in depth.</div>` : ""}
+      <div class="spread" style="margin:6px 0 10px"><b>This week</b><span class="small muted">${fmt(cur.start)} – ${fmt(cur.end)}</span></div>
+      <div class="topics" style="padding:0;display:grid;gap:6px">${cur.topics.map(topicRow).join("")}</div>
+      <div class="row" style="margin-top:14px">
+        <a class="btn btn-primary btn-sm" href="#/quiz?subject=${cur.topics[0].sid}">${icon("target")} Practise ${esc(cur.topics[0].sname)}</a>
+        <a class="btn btn-ghost btn-sm" href="#/reminders">${icon("bell")} Set a study reminder</a>
+      </div>
+      ${rest.length || plan.revisionWeeks ? `
+      <details class="plan-ahead" style="margin-top:16px">
+        <summary class="small"><b>Coming up</b> · ${rest.length} more week${rest.length === 1 ? "" : "s"}${plan.revisionWeeks ? " + revision" : ""}</summary>
+        <ul class="list">
+          ${rest.map((w) => `<li><span class="chip">Wk ${w.n}</span><div class="grow"><div class="small muted">${fmt(w.start)} – ${fmt(w.end)}</div>
+            <div class="small">${[...new Set(w.topics.map((t) => t.sname))].map((n) => `<b>${esc(n)}</b>: ${w.topics.filter((t) => t.sname === n).map((t) => esc(t.name)).join(", ")}`).join(" · ")}</div></div></li>`).join("")}
+          ${plan.revisionWeeks ? `<li><span class="chip chip-success">Revise</span><div class="grow"><div class="small muted">${fmt(plan.revStart)} – ${fmt(plan.exam)}</div>
+            <div class="small">Full-syllabus revision, timed mixed quizzes and your saved questions.</div></div></li>` : ""}
+        </ul>
+      </details>` : ""}
+    </div>`;
+  }
+
   // Study
   views.study = () => {
-    const b = branchById(Store.get().profile.branch);
+    const p = Store.get().profile;
+    const b = branchById(p.branch);
     const syl = Store.syllabusProgress(b);
     return `
     <div class="page-head spread">
-      <div><h1>Syllabus &amp; study plan</h1><p class="muted">${esc(b.name)} (${b.id}). Tick off topics as you finish them. Marks shown are approximate past-year averages.</p></div>
+      <div><h1>Study plan &amp; syllabus</h1><p class="muted">${esc(b.name)} (${b.id}). Tick off topics as you finish them. Marks shown are approximate past-year averages.</p></div>
       <div class="ring" style="--p:${syl.pct};width:96px;height:96px"><div style="width:74px;height:74px"><div><b style="font-size:1.1rem">${syl.pct}%</b><span>done</span></div></div></div>
     </div>
+    ${planSection(b, p)}
+    <h2 id="syllabus" style="margin:28px 0 14px">Full syllabus</h2>
     <div class="stack">
       ${b.subjects.map((s) => { const pp = syl.per[s.id]; return `
       <details class="card subject" ${pp.done && pp.done < pp.all ? "open" : ""}>
@@ -920,7 +995,8 @@
   // History (activity log + saved questions)
   const histUI = { tab: "activity", filter: "all" };
   const EVENT_META = { quiz: ["spark", "Quiz"], study: ["book", "Study"], reminder: ["bell", "Reminder"], saved: ["bookmark", "Saved"], account: ["user", "Account"] };
-  views.history = () => {
+  views.history = (params) => {
+    if (params && ["activity", "saved"].includes(params.get("tab"))) histUI.tab = params.get("tab");
     const st = Store.get();
     const tabs = `<div class="seg" id="hist-tabs"><button data-t="activity" class="${histUI.tab === "activity" ? "on" : ""}">${"Activity"}</button><button data-t="saved" class="${histUI.tab === "saved" ? "on" : ""}">Saved questions (${st.saved.length})</button></div>`;
     let body;

@@ -323,3 +323,10 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-
   main { padding: 0; max-width: none; }
   .card { box-shadow: none; break-inside: avoid; }
 }
+
+/* Study plan */
+#plan, #syllabus { scroll-margin-top: 84px; }
+#plan .topic .grow { flex: 1; min-width: 0; }
+.plan-ahead summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
+.plan-ahead[open] summary { margin-bottom: 4px; }
+.plan-ahead .list li { align-items: flex-start; }
