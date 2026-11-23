@@ -1,11 +1,11 @@
-# YourGATEBuddy · yourgatebuddy.com
+# YourGATEBuddy · www.yourgatebuddy.com
 
 A calm, modern study companion for GATE aspirants: the full syllabus of your paper with a week-by-week study plan, offline topic tests,
 AI quizzes and notes, timed GATE practice papers, goals, reminders and progress tracking.
 
 **Prepare · Practise · Revise · Crack GATE**
 
-**Live site:** https://yourgatebuddy.com
+**Live site:** https://www.yourgatebuddy.com
 
 No install and no build step. It's a static web app on GitHub Pages, with optional accounts and free AI powered by Supabase.
 It shares its design and architecture with [YourNEETBuddy](https://yourneetbuddy.com) and [YourIASBuddy](https://youriasbuddy.com).
@@ -36,7 +36,7 @@ quiz history, reminders and saved questions (as a note).
 
 | Piece | Service | Notes |
 |---|---|---|
-| Website | GitHub Pages + custom domain `yourgatebuddy.com` | Every push to `main` publishes the site via `.github/workflows/jekyll-gh-pages.yml` |
+| Website | GitHub Pages + custom domain `www.yourgatebuddy.com` | Every push to `main` publishes the site via `.github/workflows/jekyll-gh-pages.yml` |
 | Sign-in | Supabase Auth | Google sign-in (email magic link as a fallback) |
 | Cloud sync | Supabase Postgres | One row per user in `gate_user_data`, protected by row-level security |
 | Free AI | Supabase Edge Function `gate-ai` | Holds the Gemini key |
@@ -50,7 +50,7 @@ Until `assets/js/config.js` has a Supabase URL and key, the sign-in buttons are 
 ### 1. Publish on GitHub Pages
 1. Repo → **Settings → Pages → Source: GitHub Actions**. The workflow deploys on every push to `main`.
 2. Point `yourgatebuddy.com` at GitHub Pages (`A`/`AAAA` records for `@`, `CNAME` `www` → `raushanraj358.github.io`) and set the custom domain
-   in **Settings → Pages**, then tick **Enforce HTTPS**.
+   to `www.yourgatebuddy.com` in **Settings → Pages** (GitHub then redirects the apex to `www`), then tick **Enforce HTTPS**.
 
 ### 2. Supabase: database + free AI
 Use a new Supabase project for YourGATEBuddy, **or** reuse an existing one (all database objects are prefixed `gate_` and the function is
@@ -64,10 +64,10 @@ named `gate-ai`, so they don't clash with YourNEETBuddy's `neet_*` objects).
    If you reuse a project that already has a `GEMINI_API_KEY`, the same secret serves both functions.
 
 ### 3. Google sign-in
-1. Supabase → **Authentication → URL Configuration**: Site URL `https://yourgatebuddy.com/`; Redirect URLs
+1. Supabase → **Authentication → URL Configuration**: Site URL `https://www.yourgatebuddy.com/`; Redirect URLs
    `https://yourgatebuddy.com/`, `https://www.yourgatebuddy.com/`, `https://raushanraj358.github.io/yourgatebuddy/`, `http://localhost:5173/`.
    (In a shared project, add these alongside the existing site's URLs.)
-2. Google Cloud Console → **Google Auth Platform**: External audience; Branding with home/privacy/terms pages on `yourgatebuddy.com` and the
+2. Google Cloud Console → **Google Auth Platform**: External audience; Branding with home/privacy/terms pages on `https://www.yourgatebuddy.com/` and the
    authorised domains `yourgatebuddy.com` + `<project-ref>.supabase.co`; then publish the app.
 3. **Clients → Create client → Web application**: JavaScript origins `https://yourgatebuddy.com`, `https://www.yourgatebuddy.com`,
    `http://localhost:5173`; redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`.

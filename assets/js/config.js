@@ -4,9 +4,9 @@
 // While supabaseUrl is empty the site runs in guest mode: progress stays on the device, and AI needs the visitor's own key.
 const SITE = {
   // Supabase → Project Settings → API (or "Connect"): Project URL, e.g. 'https://abcdefghijkl.supabase.co'
-  supabaseUrl: '', // TODO: your YourGATEBuddy Supabase project URL (see README → Supabase)
+  supabaseUrl: 'https://qekauisestpvikfoqulx.supabase.co',
   // Supabase → Project Settings → API Keys: the "anon" / "publishable" key (NOT the service_role / secret key)
-  supabaseAnonKey: '', // TODO: its publishable / anon key
+  supabaseAnonKey: 'sb_publishable_ETLnET5ApslLF6XeCUefjQ_3exsa3A3',
 
   googleAuth: true, // "Continue with Google" (enable the Google provider in Supabase first)
   emailAuth: true, // "Email me a sign-in link" as a fallback

@@ -5,7 +5,7 @@ Guidance for Claude Code when working in this repository.
 ## What this is
 
 YourGATEBuddy: a study companion web app for GATE aspirants across 8 papers (CS, EE, EC, ME, CE, IN, CH, DA). It's a **static, no-build,
-vanilla-JS** single-page app hosted on **GitHub Pages** with the custom domain **https://yourgatebuddy.com**. **Supabase** provides optional
+vanilla-JS** single-page app hosted on **GitHub Pages** with the custom domain **https://www.yourgatebuddy.com** (the apex `yourgatebuddy.com` redirects to it). **Supabase** provides optional
 accounts, cloud sync and free AI. It is a sibling of YourNEETBuddy (../../NEET/yourneetbuddy) and YourIASBuddy (../../UPSC/youriasbuddy) and
 shares their design system and architecture. Don't reintroduce Vercel/serverless hosting or Firebase. See README.md for user-facing setup.
 
