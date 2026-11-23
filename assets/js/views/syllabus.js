@@ -1,5 +1,5 @@
 // Study Material: the learner's GATE paper, subject → topic, with a week-by-week study plan, sub-topic checklists,
-// progress tracking, AI-written study notes, an AI doubt solver and links to topic tests.
+// progress tracking, offline key notes, AI-written study notes, an AI doubt solver and links to topic tests.
 // (In code a syllabus topic is a "chapter" and its sub-topics are the chapter's "topics".)
 import { S, commit, syllabusStats, chapterKey, isDoneStatus } from '../store.js';
 import { icon } from '../icons.js';
@@ -9,6 +9,7 @@ import { chapterCount, subjectCount } from '../content.js';
 import { runAI, hasAI, friendlyError, AIError } from '../ai.js';
 import { toast, confirmDialog } from '../ui.js';
 import { md } from '../md.js';
+import { keyNotes, keyNotesMarkdown } from '../keynotes.js';
 
 const STATUSES = [
   { id: '', label: 'Not started', color: 'var(--muted)' },
@@ -224,6 +225,9 @@ export function mount(el, params, { setSub }) {
   const sub = SUBJECTS.some((s) => s.id === params.subject) ? params.subject : null;
   const ch = sub && chapterById(sub, params.chapter) ? params.chapter : null;
   let loadTimer = null;
+  let tab = null; // topic page: 'notes' (offline key notes) | 'ai'
+  let kn; // undefined while loading, null if this topic has no key notes
+  const keyNote = () => S().notes.find((n) => n.subject === sub && n.title === `${chapterById(sub, ch).name} (key notes)` && (n.tags || []).includes('key-notes'));
 
   /* ---------------- All subjects ---------------- */
   function overview() {
@@ -238,7 +242,7 @@ export function mount(el, params, { setSub }) {
       <div style="flex:1 1 260px">
         <span class="eyebrow">GATE · ${esc(BRANCH.id)} · ${esc(BRANCH.name)}</span>
         <h2 class="serif" style="font-size:30px;margin:4px 0">${a.done} of ${a.total} topics covered</h2>
-        <p class="hint">Open a subject, study a topic with AI notes, tick off its sub-topics, then take the topic test. <a href="#/profile">Change paper</a></p>
+        <p class="hint">Open a subject, study a topic with its key notes (or detailed AI notes), tick off its sub-topics, then take the topic test. <a href="#/profile">Change paper</a></p>
       </div>
       <div style="flex:1 1 240px">
         <div class="progress good" style="height:10px"><i style="width:${a.total ? (a.done / a.total) * 100 : 0}%"></i></div>
@@ -278,7 +282,7 @@ export function mount(el, params, { setSub }) {
     return `<div class="li syl-topic">
       <button class="status-pill" data-cycle="${esc(c.id)}" style="--c:${stt.color}" title="Change status">${stt.label}</button>
       <a class="li-main" href="${href(sub, c.id)}" style="text-decoration:none;color:inherit"><div class="li-title">${esc(c.name)}</div>
-        <div class="li-sub"><span class="w-tag w-${c.weight}" title="${WEIGHT_LABEL[c.weight]}">${WEIGHT_WORD[c.weight]}</span> ${x.done}/${x.total} sub-topics${n ? ` · ${n} offline Q${n === 1 ? '' : 's'}` : ''}${mat ? ` · ${icon('sparkles', 11)} AI notes` : ''}</div></a>
+        <div class="li-sub"><span class="w-tag w-${c.weight}" title="${WEIGHT_LABEL[c.weight]}">${WEIGHT_WORD[c.weight]}</span> ${x.done}/${x.total} sub-topics · Key notes${n ? ` · ${n} offline Q${n === 1 ? '' : 's'}` : ''}${mat ? ` · ${icon('sparkles', 11)} AI notes` : ''}</div></a>
       <a class="icon-btn sm bare" href="${href(sub, c.id)}" aria-label="Open">${icon('right', 16)}</a>
     </div>`;
   }
@@ -324,7 +328,24 @@ export function mount(el, params, { setSub }) {
     const qCount = chapterCount(sub, ch);
 
     let body;
-    if (busy) {
+    if (tab === 'notes') {
+      if (kn === undefined) body = `<div class="stack" style="padding:8px 0"><div class="skeleton"></div><div class="skeleton" style="width:80%"></div><div class="skeleton" style="width:60%"></div></div>`;
+      else if (!kn) {
+        body = `<div class="empty" style="padding:28px 8px"><div class="em-icon">${icon('book', 24)}</div><h4>Key notes didn't load</h4>
+          <p>Check your connection and open the topic again, or read the AI notes.</p>
+          <button class="btn accent" data-tab="ai" style="margin-top:14px">${icon('sparkles', 15)} Go to AI notes</button></div>`;
+      } else {
+        const saved = keyNote();
+        body = `<div class="notice info" style="margin-bottom:16px">${icon('book', 18)}<div class="hint">Ready-made key notes for quick revision, no AI or internet needed. Read them alongside a standard textbook.</div></div>
+          <article class="md">${md(keyNotesMarkdown(kn))}</article>
+          <hr class="divider">
+          <div class="row wrap">
+            ${saved ? `<a class="btn" href="#/notes?id=${esc(saved.id)}">${icon('notes', 15)} Open in my notes</a>` : `<button class="btn" data-savekey>${icon('notes', 15)} Save to my notes</button>`}
+            <span class="spacer"></span>
+            <button class="btn ghost" data-tab="ai">${icon('sparkles', 15)} ${mat ? 'Read AI notes' : 'Get detailed AI notes'}</button>
+          </div>`;
+      }
+    } else if (busy) {
       body = `<div class="loader"><div class="orbit"></div>
         <div><h3 class="serif" style="font-size:26px">Writing your study notes</h3><p class="muted" id="loadLine">${LOADING_LINES[0]}</p></div>
         <div style="width:min(420px,100%)" class="stack"><div class="skeleton"></div><div class="skeleton" style="width:80%"></div><div class="skeleton" style="width:60%"></div></div>
@@ -342,7 +363,7 @@ export function mount(el, params, { setSub }) {
     } else {
       body = `<div class="empty" style="padding:28px 8px">
         <div class="em-icon">${icon('sparkles', 24)}</div>
-        <h4>Study notes for this topic</h4>
+        <h4>Detailed AI notes for this topic</h4>
         <p>Exam-focused notes with concepts, formulas, key terms, common mistakes, PYQ themes and a quick-revision box.</p>
         ${err ? `<div class="notice" style="margin:14px auto 0;max-width:520px;text-align:left">${icon('alert', 18)}<div>${esc(err.message)}${['NO_KEY', 'AUTH', 'MODEL'].includes(err.code) ? ` <a href="#/settings" style="font-weight:700">Open Settings →</a>` : ''}</div></div>` : ''}
         ${hasAI()
@@ -360,6 +381,10 @@ export function mount(el, params, { setSub }) {
           <span class="tag"><span class="dot" style="background:${s.color}"></span>${esc(s.short)} · <span class="w-tag w-${c.weight}">${WEIGHT_LABEL[c.weight]}</span></span>
           <h2 class="serif">${esc(c.name)}</h2>
           <div class="seg" role="group" aria-label="Topic status">${STATUSES.map((t) => `<button class="${x.status === t.id ? 'on' : ''}" data-status="${t.id}">${t.label}</button>`).join('')}</div>
+        </div>
+        <div class="seg" role="tablist" aria-label="Notes" style="margin-bottom:16px">
+          <button role="tab" aria-selected="${tab === 'notes'}" class="${tab === 'notes' ? 'on' : ''}" data-tab="notes">${icon('book', 13)} Key notes</button>
+          <button role="tab" aria-selected="${tab === 'ai'}" class="${tab === 'ai' ? 'on' : ''}" data-tab="ai">${icon('sparkles', 13)} AI notes${mat ? ' ✓' : busy ? ' …' : ''}</button>
         </div>
         ${body}
       </div>
@@ -418,6 +443,19 @@ export function mount(el, params, { setSub }) {
     }
   }
 
+  function saveKeyNote() {
+    if (!kn || keyNote()) return draw();
+    const now = Date.now();
+    S().notes.push({
+      id: uid(), title: `${chapterById(sub, ch).name} (key notes)`, subject: sub, tags: ['key-notes'], pinned: false,
+      body: keyNotesMarkdown(kn), createdAt: now, updatedAt: now, openedAt: now,
+      revisions: 0, nextRevision: dateKey(addDays(new Date(), 1)),
+    });
+    commit();
+    toast('Saved to Notes', 'good', 'Added to your revision schedule.');
+    draw();
+  }
+
   function saveNote() {
     const c = chapterById(sub, ch);
     const k = chapterKey(sub, ch);
@@ -436,7 +474,8 @@ export function mount(el, params, { setSub }) {
     const b = e.target.closest('button');
     if (!b) return;
     const d = b.dataset;
-    if (d.cycle !== undefined) {
+    if (d.tab) { tab = d.tab; draw(); }
+    else if (d.cycle !== undefined) {
       const s = d.sub || sub;
       const k = chapterKey(s, d.cycle);
       const i = STATUSES.findIndex((x) => x.id === (syl().status[k] || ''));
@@ -460,9 +499,11 @@ export function mount(el, params, { setSub }) {
       draw();
     } else if ('generate' in d) {
       if (syl().material[chapterKey(sub, ch)] && !(await confirmDialog('Rewrite these notes? The current version will be replaced.', 'Rewrite'))) return;
+      tab = 'ai';
       generate(sub, ch);
     } else if ('cancel' in d) generating?.controller.abort();
     else if ('savenote' in d) saveNote();
+    else if ('savekey' in d) saveKeyNote();
   });
 
   el.addEventListener('submit', (e) => {
@@ -475,6 +516,14 @@ export function mount(el, params, { setSub }) {
 
   const onChange = () => el.isConnected && draw();
   window.addEventListener('ygb:syllabus', onChange);
+  if (ch) {
+    const k = chapterKey(sub, ch);
+    tab = generating?.key === k || lastError?.key === k ? 'ai' : 'notes';
+    keyNotes(sub, ch).then((n) => {
+      kn = n;
+      if (el.isConnected) draw();
+    });
+  }
   draw();
   if (!sub && params.view === 'plan') setTimeout(() => el.querySelector('#plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
   return () => {

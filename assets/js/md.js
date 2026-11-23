@@ -2,15 +2,18 @@
 import { esc, safeUrl } from './utils.js';
 
 function inline(s) {
+  // Code spans are set aside first so * and == inside them (e.g. C pointers) aren't treated as emphasis.
+  const code = [];
   return s
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/`([^`]+)`/g, (m, c) => `\u0000${code.push(c) - 1}\u0000`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
     .replace(/==([^=]+)==/g, '<mark>$1</mark>')
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, u) => {
       const url = safeUrl(u.replace(/&amp;/g, '&'));
       return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${t}</a>` : t;
-    });
+    })
+    .replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${code[i]}</code>`);
 }
 
 export function md(src = '') {

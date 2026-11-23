@@ -1,7 +1,7 @@
-import { S, commit } from '../store.js';
+import { S, commit, chapterKey, isDoneStatus } from '../store.js';
 import { icon } from '../icons.js';
 import { esc, uid, safeUrl } from '../utils.js';
-import { LIBRARY, SUBJECTS, subjectById } from '../data.js';
+import { LIBRARY, SUBJECTS, subjectById, chaptersOf } from '../data.js';
 import { openModal, toast, confirmDialog, emptyState, ring } from '../ui.js';
 
 const TYPES = {
@@ -42,6 +42,25 @@ export function mount(el) {
     return (!q || (r.title + ' ' + (r.desc || '') + ' ' + (r.note || '')).toLowerCase().includes(q.toLowerCase())) && (!subj || r.subject === subj) && (!status || st === status);
   }
 
+  // Every syllabus topic of the learner's paper, grouped by subject, linking to its key notes + AI notes in Study Material.
+  function topicNotes() {
+    const term = q.trim().toLowerCase();
+    const groups = SUBJECTS.filter((s) => !subj || s.id === subj)
+      .map((s) => ({ s, chs: chaptersOf(s.id).filter((c) => !term || [c.name, s.name, ...c.topics].join(' ').toLowerCase().includes(term)) }))
+      .filter((g) => g.chs.length);
+    if (!groups.length) return `<div class="card">${emptyState('search', 'No matches', 'Try a different search or subject.')}</div>`;
+    const syl = S().syllabus;
+    return `<p class="hint" style="margin-bottom:14px">Every topic has offline key notes for quick revision, plus detailed AI notes on demand.</p>
+      <div class="res-grid">${groups.map(({ s, chs }) => `<div class="card">
+        <div class="card-head"><h3><span class="dot" style="background:${s.color};width:10px;height:10px"></span> ${esc(s.name)}</h3><span class="tag">~${s.marks} marks</span></div>
+        <div class="list">${chs.map((c) => {
+          const k = chapterKey(s.id, c.id);
+          const st = syl.status[k];
+          return `<a class="li" href="#/syllabus?subject=${encodeURIComponent(s.id)}&chapter=${encodeURIComponent(c.id)}" style="text-decoration:none;color:inherit">
+            <div class="li-main"><div class="li-title">${esc(c.name)}</div><div class="li-sub">Key notes${syl.material[k] ? ' · AI notes' : ''}${isDoneStatus(st) ? ` · ${icon('check', 12)} ${st === 'revised' ? 'Revised' : 'Done'}` : ''}</div></div>${icon('right', 16)}</a>`;
+        }).join('')}</div></div>`).join('')}</div>`;
+  }
+
   function draw() {
     const lib = S().library;
     const done = LIBRARY.filter((r) => lib[r.id] === 'done').length;
@@ -64,15 +83,15 @@ export function mount(el) {
         </div>
       </div>
       <div class="row wrap" style="margin-bottom:16px;gap:10px">
-        <div class="seg"><button class="${tab === 'library' ? 'on' : ''}" data-tab="library">${icon('library', 13)} Curated library</button><button class="${tab === 'mine' ? 'on' : ''}" data-tab="mine">${icon('bookmark', 13)} My resources ${mine.length}</button></div>
+        <div class="seg"><button class="${tab === 'library' ? 'on' : ''}" data-tab="library">${icon('library', 13)} Curated library</button><button class="${tab === 'topics' ? 'on' : ''}" data-tab="topics">${icon('book', 13)} Topic notes</button><button class="${tab === 'mine' ? 'on' : ''}" data-tab="mine">${icon('bookmark', 13)} My resources ${mine.length}</button></div>
         <span class="spacer"></span>
         <div style="position:relative;min-width:200px;flex:1;max-width:320px"><span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted)">${icon('search', 16)}</span>
-          <input class="input" id="rSearch" placeholder="Search resources…" value="${esc(q)}" style="padding-left:36px" aria-label="Search resources"></div>
+          <input class="input" id="rSearch" placeholder="${tab === 'topics' ? 'Search topics…' : 'Search resources…'}" value="${esc(q)}" style="padding-left:36px" aria-label="Search resources"></div>
         <select class="select" id="rSubj" style="width:auto" aria-label="Filter by subject"><option value="">All subjects</option>${SUBJECTS.map((s) => `<option value="${s.id}" ${subj === s.id ? 'selected' : ''}>${esc(s.short)}</option>`).join('')}</select>
-        <select class="select" id="rStatus" style="width:auto" aria-label="Filter by status"><option value="">Any status</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        ${tab === 'topics' ? '' : `<select class="select" id="rStatus" style="width:auto" aria-label="Filter by status"><option value="">Any status</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`}
       </div>
       <div id="rItems">
-      ${tab === 'library'
+      ${tab === 'topics' ? topicNotes() : tab === 'library'
         ? (cats.length ? cats.map((c) => `<h3 class="serif" style="font-size:24px;margin:8px 0 12px">${esc(c)}</h3><div class="res-grid" style="margin-bottom:22px">${items.filter((r) => r.cat === c).map((r) => card(r, false)).join('')}</div>`).join('') : `<div class="card">${emptyState('search', 'No matches', 'Try different filters.')}</div>`)
         : (items.length ? `<div class="res-grid">${items.map((r) => card(r, true)).join('')}</div>` : `<div class="card">${emptyState('library', mine.length ? 'No matches' : 'Your list is empty', mine.length ? 'Try different filters.' : 'Add the books, links and lectures you are using.', mine.length ? '' : `<button class="btn sm" data-add>${icon('plus', 14)} Add resource</button>`)}</div>`)}
       </div>`;

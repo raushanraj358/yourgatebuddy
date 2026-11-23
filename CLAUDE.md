@@ -38,6 +38,8 @@ index.html → assets/js/app.js (router, nav, onboarding, timers, boot)
   data.js      EXAM, BRANCHES, SYLLABUS (paper → subjects → chapters with weight + sub-topics), ALL_LIBRARY, HABITS, TIPS.
                SUBJECTS / CHAPTERS / LIBRARY / BRANCH are live bindings for the learner's paper, swapped by setBranch()
   content.js   offline question BANK (tagged paper/subject/chapter, 1 or 2 marks) + toMCQ() (shuffles options)
+  keynotes.js  offline key notes per topic, lazy-loaded from keynotes/<file>.js: ga.js and em.js are shared by every paper,
+               everything else is <paper>-<subjectId>.js (subject ids repeat across papers), keyed by chapter id
   config.js    public site config (Supabase URL/key, feature flags, display-only AI limits)
 ```
 
@@ -98,6 +100,10 @@ index.html → assets/js/app.js (router, nav, onboarding, timers, boot)
 - GATE marking: `negFor(marks)` in data.js gives the marks lost for a wrong answer (1/3 or 2/3). Scores are rounded with `round2()`.
 - Subject ids and chapter ids are stored in user data. Don't rename them. Adding chapters or sub-topics is safe; renaming a sub-topic orphans its
   tick. Chapter order within a subject must stay as is: store.js `migrateOld()` maps the first site's topic indexes onto it.
+- Every chapter needs key notes: when you add one, add its entry to `assets/js/keynotes/<paper>-<subjectId>.js` (or ga.js / em.js) as
+  `{ overview, sections: [[title, [points]]], formulas, exam, traps }`. Some modules reuse sections from others by importing them
+  (e.g. in-cs.js from ee-cs.js), so check importers before renaming a section title. Points go through `md()`: wrap code in backticks and
+  don't use a bare `*` or `==` outside code spans (they become italics/highlights); use × and ∗ instead.
 - UI copy: short, calm, encouraging; Indian English; dates via `fmtDate` (en-IN). GATE is English-only, so there is no Hindi output.
 - Styling: use the existing CSS tokens/classes in `assets/css/styles.css` (`card`, `btn`, `chip`, `seg`, `tag`, `notice`, `list/li`,
   `progress`, `stat-card`). Colours go through CSS variables so light and dark themes both work.
