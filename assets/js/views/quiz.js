@@ -18,9 +18,9 @@ const MODES = {
 // GATE gives 180 minutes for 65 questions: about 2.8 minutes a question.
 const MOCKS = {
   quick: { label: 'Quick paper', count: 15, desc: 'Aptitude, maths & core in GATE proportions' },
-  full: { label: 'Full bank paper', count: 0, desc: 'Every offline question for your paper' },
+  full: { label: 'Full-length paper', count: 65, desc: '65 questions in 3 hours, like the real exam' },
 };
-const minsFor = (n) => Math.max(5, Math.ceil(n * 2.8));
+const minsFor = (n) => (n >= 65 ? 180 : Math.max(5, Math.ceil(n * 2.8)));
 const LOADING_LINES = ['Going through the GATE syllabus…', 'Studying GATE PYQ patterns…', 'Working out the numericals…', 'Crafting tricky distractors…', 'Double-checking calculations…', 'Writing explanations…'];
 const marksOf = (q) => (q.marks === 2 ? 2 : 1);
 const fmtScore = (n) => String(round2(n)).replace(/^-0$/, '0');
@@ -86,7 +86,7 @@ export function mount(el, params) {
     if (cfg.mode === 'chapter') {
       const avail = ch ? chapterCount(cfg.subject, cfg.chapter) : subjectCount(cfg.subject);
       form = `${subjectChips()}${chapterSelect(`All ${subjectById(cfg.subject).short} topics (mixed) · ${subjectCount(cfg.subject)} Qs`, true)}
-        <div class="field"><span class="label">Number of questions</span><div class="seg">${[10, 20, 0].map((c) => `<button class="${cfg.count === c ? 'on' : ''}" data-count="${c}">${c || 'All'}</button>`).join('')}</div></div>
+        <div class="field"><span class="label">Number of questions</span><div class="seg">${[5, 10, 15, 20, 25, 30, 0].map((c) => `<button class="${cfg.count === c ? 'on' : ''}" data-count="${c}">${c || 'All'}</button>`).join('')}</div></div>
         ${practiceSwitch()}
         ${avail ? `<div class="notice info">${icon('book', 18)}<div style="flex:1">Built-in GATE-style questions, no internet or AI needed. ${ch ? `Testing <b>${esc(ch.name)}</b> (${avail} question${avail === 1 ? '' : 's'}).` : `${avail} questions mixed from the topics of ${esc(subjectById(cfg.subject).name)}.`}</div></div>
         <div class="row wrap"><button class="btn accent lg" data-start-chapter>${icon('play', 17)} Start topic test</button></div>`
@@ -418,7 +418,7 @@ export function mount(el, params) {
     const b = e.target.closest('button');
     if (!b || b.disabled) return;
     const d = b.dataset;
-    if (d.mode) { cfg.mode = d.mode; if (d.mode === 'chapter' && ![10, 20, 0].includes(cfg.count)) cfg.count = 10; if (d.mode === 'ai' && ![5, 10, 15, 20].includes(cfg.count)) cfg.count = 10; lastError = null; draw(); }
+    if (d.mode) { cfg.mode = d.mode; if (d.mode === 'chapter' && ![5, 10, 15, 20, 25, 30, 0].includes(cfg.count)) cfg.count = 10; if (d.mode === 'ai' && ![5, 10, 15, 20].includes(cfg.count)) cfg.count = 10; lastError = null; draw(); }
     else if (d.subject) { cfg.subject = d.subject; cfg.chapter = ''; cfg.topic = ''; draw(); }
     else if (d.topic !== undefined) { cfg.topic = cfg.topic === d.topic ? '' : d.topic; draw(); }
     else if (d.diff) { cfg.difficulty = d.diff; draw(); }

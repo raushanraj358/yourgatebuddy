@@ -17,7 +17,10 @@ import * as settings from './views/settings.js';
 import * as profile from './views/profile.js';
 import * as syllabus from './views/syllabus.js';
 import * as goals from './views/goals.js';
+import * as faq from './views/faq.js';
+import * as contact from './views/contact.js';
 import { initCloud, cloud, onCloudChange } from './cloud.js';
+import { loadBank, bankReady } from './content.js';
 
 const ROUTES = {
   dashboard: { title: 'Dashboard', icon: 'home', view: dashboard, group: 'Plan', tab: 'Home' },
@@ -25,12 +28,14 @@ const ROUTES = {
   tracker: { title: 'Daily Tracker', icon: 'tracker', view: tracker, group: 'Plan', tab: 'Tracker', sub: 'Plan the day, build habits, review consistency' },
   study: { title: 'Study Hours', icon: 'timer', view: study, group: 'Plan', tab: 'Timer', sub: 'Focus timer, logs and analytics' },
   reminders: { title: 'Reminders', icon: 'bell', view: reminders, group: 'Plan', sub: 'Never miss your routine' },
-  syllabus: { title: 'Study Material', icon: 'book', view: syllabus, group: 'Learn', tab: 'Study', sub: 'Your GATE syllabus, subject by subject' },
-  quiz: { title: 'Quiz & Mock Tests', icon: 'target', view: quiz, group: 'Learn', tab: 'Quiz', sub: 'Offline topic tests, AI quizzes and timed GATE practice papers' },
+  syllabus: { title: 'Study Material', icon: 'book', view: syllabus, group: 'Learn', tab: 'Study', bank: true, sub: 'Your GATE syllabus, subject by subject' },
+  quiz: { title: 'Quiz & Mock Tests', icon: 'target', view: quiz, group: 'Learn', tab: 'Quiz', bank: true, sub: 'Offline topic tests, AI quizzes and timed GATE practice papers' },
   notes: { title: 'Notes', icon: 'notes', view: notes, group: 'Learn', tab: 'Notes', sub: 'Your notebook with spaced revision' },
   resources: { title: 'Resources', icon: 'library', view: resources, group: 'Learn', sub: 'Curated sources and your own reading list' },
   profile: { title: 'Profile', icon: 'user', view: profile, group: 'You', sub: 'Your account, paper, goal and journey so far' },
   settings: { title: 'Settings', icon: 'settings', view: settings, group: 'You', sub: 'AI, appearance and data' },
+  contact: { title: 'Contact', icon: 'mail', view: contact, group: 'You', sub: 'Feedback, issues and ideas: we read every message' },
+  faq: { title: 'FAQs', icon: 'info', view: faq, group: 'You', sub: 'Answers about the app, your data and the GATE exam' },
 };
 
 /* ---------- Navigation ---------- */
@@ -123,9 +128,16 @@ function parseHash() {
   const route = ROUTES[path] ? path : 'dashboard';
   return { route, params: Object.fromEntries(new URLSearchParams(q)) };
 }
-function navigate() {
+let navSeq = 0;
+async function navigate() {
+  const seq = ++navSeq;
   const { route, params } = parseHash();
   const r = ROUTES[route];
+  // Views that show offline question counts need the paper's question bank first (cached after the first load).
+  if (r.bank && !bankReady()) {
+    await loadBank().catch(() => {});
+    if (seq !== navSeq) return; // the learner navigated again while it loaded
+  }
   if (typeof unmount === 'function') unmount();
   unmount = null;
   const viewEl = $('#view');

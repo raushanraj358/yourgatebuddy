@@ -37,13 +37,17 @@ index.html → assets/js/app.js (router, nav, onboarding, timers, boot)
   providers.js Gemini (Auto model fallback chain) + OpenAI adapters; shared with the Edge Function
   data.js      EXAM, BRANCHES, SYLLABUS (paper → subjects → chapters with weight + sub-topics), ALL_LIBRARY, HABITS, TIPS.
                SUBJECTS / CHAPTERS / LIBRARY / BRANCH are live bindings for the learner's paper, swapped by setBranch()
-  content.js   offline question BANK (tagged paper/subject/chapter, 1 or 2 marks) + toMCQ() (shuffles options)
+  content.js   offline question bank loader: loadBank() lazily imports quizbank/<file>.js for the current paper (ga.js and
+               em.js shared, else <paper>-<subjectId>.js), keyed by chapter id; toMCQ() shuffles options. app.js awaits
+               loadBank() before mounting routes flagged `bank: true` so chapterCount()/subjectCount() stay synchronous
   keynotes.js  offline key notes per topic, lazy-loaded from keynotes/<file>.js: ga.js and em.js are shared by every paper,
                everything else is <paper>-<subjectId>.js (subject ids repeat across papers), keyed by chapter id
   config.js    public site config (Supabase URL/key, feature flags, display-only AI limits)
 ```
 
 ### Routing and views
+- Contact (`views/contact.js`, `CONTACT` email/Instagram/X) and FAQs (`views/faq.js`) are routes in the "You" group and are linked from the
+  footer of index.html, privacy.html and terms.html. Keep the FAQ answers in step with the app's features and limits.
 - Hash routes: `#/<route>?a=b`. Routes are registered in `ROUTES` in `app.js` (title, icon, group, optional mobile `tab`, `sub`).
 - On each navigation, `#view` is replaced with a fresh clone (old listeners are dropped). Views render with template strings into
   `el.innerHTML` and use **event delegation** on `el` (`data-*` attributes on buttons).
@@ -94,9 +98,12 @@ index.html → assets/js/app.js (router, nav, onboarding, timers, boot)
   "topic" in the UI; its checklist items are the chapter's `topics`, shown as "sub-topics". Keep UI copy in that vocabulary.
 - The app shows ONE paper at a time (`S().profile.branch`; app.js calls `syncBranch()` on boot, after cloud data replaces local data and
   whenever the profile's branch changes). Never cache SUBJECTS/CHAPTERS across a branch switch.
-- GATE accuracy matters: everything must match standard textbooks and the official GATE syllabus. Bank items are
-  `[paper, subject, chapter, question, [4 options], correctIndex, explanation, marks]`; avoid "option A/B" references in explanations because
-  options are shuffled.
+- GATE accuracy matters: everything must match standard textbooks and the official GATE syllabus. Bank items live in
+  `assets/js/quizbank/<file>.js` as `Q = { '<chapterId>': [[question, [4 options], correctIndex, explanation, marks?, papers?]] }`
+  (marks defaults to 1; papers like `'!CS'` limits a shared ga/em item). Every chapter must keep at least 30 questions for every paper
+  (CS sees only the non-vector calculus items). Topics shared between papers (e.g. signals, control, fluids) contain copies of the
+  same questions, so fix an error in every file that has it. Avoid "option A/B" references in explanations because options are shuffled;
+  options containing "both / neither / all of / none of" switch shuffling off for that question.
 - GATE marking: `negFor(marks)` in data.js gives the marks lost for a wrong answer (1/3 or 2/3). Scores are rounded with `round2()`.
 - Subject ids and chapter ids are stored in user data. Don't rename them. Adding chapters or sub-topics is safe; renaming a sub-topic orphans its
   tick. Chapter order within a subject must stay as is: store.js `migrateOld()` maps the first site's topic indexes onto it.
